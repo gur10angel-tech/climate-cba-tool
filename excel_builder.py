@@ -58,6 +58,8 @@ def build_excel(data: dict, path: str):
     _results(wb, data, rm)
     _sensitivity(wb, data, rm)
     _summary(wb, data, rm)
+    if data.get("specialist_type") in ("natural_shading", "green_roof"):
+        _specialist_detail(wb, data, rm)
     wb.save(path)
 
 
@@ -325,6 +327,36 @@ def _results(wb, data, rm):
         c.alignment = Alignment(horizontal="center")
     row += 2
 
+    # Advanced benefit breakdown (specialist modes only)
+    BENEFIT_LABELS = {
+        "avoided_mortality_npv":      "Avoided Mortality — NPV",
+        "morbidity_savings_npv":      "Morbidity Savings — NPV",
+        "skin_cancer_prevention_npv": "Skin Cancer Prevention — NPV",
+        "carbon_sequestration_npv":   "Carbon Sequestration — NPV",
+        "runoff_reduction_npv":       "Runoff Reduction — NPV",
+        "air_quality_npv":            "Air Quality — NPV",
+        "habitat_creation_npv":       "Habitat Creation — NPV",
+        "property_value_uplift_npv":  "Property Value Uplift — NPV",
+        "roof_longevity_npv":        "Roof Longevity Extension — NPV",
+    }
+    adv_measures = [m for m in measures if m.get("advanced_benefits")]
+    if adv_measures:
+        _sec(ws, row, 1, "ADVANCED BENEFIT BREAKDOWN  (Specialist Methodology)", span=n+2); row += 1
+        all_adv_keys = {k for m in adv_measures for k in m.get("advanced_benefits", {})}
+        for key, label in BENEFIT_LABELS.items():
+            if key not in all_adv_keys:
+                continue
+            _cell(ws, row, 1, label, bold=False, bg="F0FDF4")
+            for ci, m in enumerate(measures, 2):
+                val = (m.get("advanced_benefits") or {}).get(key, 0) or 0
+                c = ws.cell(row=row, column=ci, value=val)
+                c.font = Font(name="Arial", color=BLACK, size=10)
+                c.number_format = "#,##0.0"; c.border = _bd()
+                c.alignment = Alignment(horizontal="right")
+                c.fill = PatternFill("solid", fgColor="F0FDF4")
+            row += 1
+        row += 1
+
     # Chart data area
     chart_r = row
     ws.cell(row=chart_r, column=1, value="Measure")
@@ -353,6 +385,19 @@ def _results(wb, data, rm):
     rm["results_npv_row"]   = NPV_ROW
 
 
+def _build_specialist_sensitivity_vars(data):
+    """Return the 4-pillar sensitivity variable list for specialist measure types."""
+    sp  = data.get("specialist_params", {})
+    dr  = data.get("discount_rate", 0.035)
+    eff = sp.get("heat_reduction_efficiency", 0.4)
+    return [
+        {"name": "Discount Rate",            "low": 0.02,             "base": dr,  "high": 0.10,            "unit": "%"},
+        {"name": "Heat Reduction Efficiency","low": round(eff*0.7,3), "base": eff, "high": round(eff*1.3,3),"unit": "multiplier"},
+        {"name": "CAPEX Variation",          "low": 0.80,             "base": 1.00,"high": 1.30,            "unit": "multiplier"},
+        {"name": "Activity Level",           "low": 0.70,             "base": 1.00,"high": 1.30,            "unit": "multiplier"},
+    ]
+
+
 # ── SHEET 3: SENSITIVITY ──────────────────────────────────────────────────────
 def _sensitivity(wb, data, rm):
     ws = wb.create_sheet("Sensitivity")
@@ -360,6 +405,8 @@ def _sensitivity(wb, data, rm):
     measures = data["measures"]
     n = rm["n"]
     sens_vars = data.get("sensitivity_vars", [])
+    if data.get("specialist_type") in ("natural_shading", "green_roof"):
+        sens_vars = _build_specialist_sensitivity_vars(data)
 
     _hdr(ws, 1, 1, "SENSITIVITY ANALYSIS", sz=13, span=n+5)
     _hdr(ws, 2, 1,
@@ -420,18 +467,31 @@ def _sensitivity(wb, data, rm):
                 ben   = f"Inputs!{get_column_letter(ci)}${rm['benefit']}"
                 life  = f"Inputs!{get_column_letter(ci)}${rm['life']}"
 
+                pv_cost_override = None
                 if sv_name == "Discount Rate":
                     dr_use = param_ref
                     ben_term = ben
                 elif sv_name == "Annual Benefit":
                     dr_use = dr_inp
                     ben_term = f"({ben}*{param_ref})"
+                elif sv_name == "CAPEX Variation":
+                    dr_use = dr_inp
+                    ben_term = ben
+                    pv_cost_override = f"(({capex}*{param_ref})+{opex}/{dr_use}*(1-(1+{dr_use})^(-{life})))"
+                elif sv_name == "Activity Level":
+                    dr_use = dr_inp
+                    ben_term = f"({ben}*{param_ref})"
+                elif sv_name == "Heat Reduction Efficiency":
+                    dr_use = dr_inp
+                    base_eff = data.get("specialist_params", {}).get("heat_reduction_efficiency", 0.5)
+                    ben_term = f"({ben}*{param_ref}/{base_eff})"
                 else:
                     dr_use = dr_inp
                     ben_term = ben
 
                 pv_ben  = f"({ben_term}/{dr_use}*(1-(1+{dr_use})^(-{life})))"
-                pv_cost = f"({capex}+{opex}/{dr_use}*(1-(1+{dr_use})^(-{life})))"
+                pv_cost = pv_cost_override if pv_cost_override else \
+                          f"({capex}+{opex}/{dr_use}*(1-(1+{dr_use})^(-{life})))"
                 formula = f"=IF({dr_use}>0,IF({pv_cost}>0,{pv_ben}/{pv_cost},0),0)"
 
                 c = ws.cell(row=row, column=mi+3, value=formula)
@@ -526,3 +586,300 @@ def _summary(wb, data, rm):
         row += 1
 
     _widths(ws, {1: 30, 2: 18, 3: 18, 4: 16, 5: 18})
+
+
+# ── SHEET 5: SPECIALIST DETAIL ────────────────────────────────────────────────
+def _specialist_detail(wb, data, rm):
+    ws = wb.create_sheet("Specialist Detail")
+    ws.sheet_view.showGridLines = False
+
+    stype    = data.get("specialist_type", "")
+    vsl      = data.get("vsl_params", {})
+    cdd      = data.get("cdd_params", {})
+    sp       = data.get("specialist_params", {})
+    measures = data["measures"]
+    n        = rm["n"]
+    cur      = data.get("currency", "NIS")
+
+    stype_label = "Natural Shading (Boulevard Trees)" if stype == "natural_shading" else "Green Roof"
+
+    # ── Row 1-2: Header ────────────────────────────────────────────────────────
+    _hdr(ws, 1, 1, f"SPECIALIST METHODOLOGY DETAIL — {stype_label.upper()}", sz=13, span=10)
+    _hdr(ws, 2, 1,
+         f"Functional unit: {sp.get('functional_unit','—')}  |  {data.get('problem_title','')}",
+         bg=C_MID, fg="CBD5E1", bold=False, sz=9, span=10)
+
+    row = 4
+
+    # ── Section: VSL Derivation ────────────────────────────────────────────────
+    _sec(ws, row, 1, "VALUE OF STATISTICAL LIFE — STEP-BY-STEP DERIVATION", span=4); row += 1
+    for ci, h in enumerate(["Step", "Parameter", "Value", "Notes"], 1):
+        _hdr(ws, row, ci, h, bg=C_ACCENT, sz=10)
+    row += 1
+
+    vsl_base     = vsl.get("base_vsl_usd_2005", 3_000_000)
+    cpi_mult     = vsl.get("cpi_multiplier", 1.68)
+    ppp_ratio    = vsl.get("gdp_ppp_ratio", 0.89)
+    income_el    = vsl.get("income_elasticity", 1.0)
+    fx           = vsl.get("usd_to_local_currency", 3.7)
+    life_exp     = vsl.get("life_expectancy_remaining", 35)
+    vsl_local    = vsl.get("computed_vsl_local", 12_800_000)
+    vsly_local   = vsl.get("computed_vsly_local", 365_714)
+    cpi_adj_vsl  = round(vsl_base * cpi_mult)
+    ppp_adj_vsl_usd = round(cpi_adj_vsl * ppp_ratio * income_el)
+
+    VSL_ROWS = [
+        ("1", "Base VSL (OECD, 2005 USD)",       vsl_base,           "#,##0",   "OECD meta-study baseline"),
+        ("2", f"× CPI Multiplier (2005→2024)",    cpi_mult,           "0.00",    "US Bureau of Labor Statistics"),
+        ("3", "= CPI-Adjusted VSL (2024 USD)",    cpi_adj_vsl,        "#,##0",   ""),
+        ("4", f"× GDP PPP Ratio (Israel / OECD)", ppp_ratio,          "0.000",   "World Bank WDI"),
+        ("5", "× Income Elasticity",              income_el,          "0.0",     "Standard for developed economies"),
+        ("6", "= PPP-Adjusted VSL (USD)",         ppp_adj_vsl_usd,    "#,##0",   ""),
+        ("7", f"× Exchange Rate ({cur}/USD)",     fx,                 "0.00",    ""),
+        ("8", f"= VSL in {cur}",                  vsl_local,          "#,##0",   "Used in benefit calculations"),
+        ("9", "÷ Remaining Life Expectancy (yrs)",life_exp,           "0",       "Affected demographic"),
+        ("10",f"= VSLY in {cur}",                 vsly_local,         "#,##0",   "Value per Statistical Life Year"),
+    ]
+    for step, param, val, fmt, note in VSL_ROWS:
+        _cell(ws, row, 1, step, align="center")
+        _cell(ws, row, 2, param, bold=(step in ("8","10")))
+        c = ws.cell(row=row, column=3, value=val)
+        c.font = Font(name="Arial",
+                      bold=(step in ("8","10")),
+                      color=C_GREEN if step in ("8","10") else BLACK, size=10)
+        c.number_format = fmt; c.border = _bd()
+        c.alignment = Alignment(horizontal="right")
+        if step in ("8","10"):
+            c.fill = PatternFill("solid", fgColor=C_LIGHT)
+        _cell(ws, row, 4, note, color="94A3B8")
+        row += 1
+
+    row += 1
+
+    # ── Section: CDD Parameters ────────────────────────────────────────────────
+    _sec(ws, row, 1, "COOLING DEGREE DAY PARAMETERS", span=4); row += 1
+    for ci, h in enumerate(["Parameter", "Value", "Unit", "Notes"], 1):
+        _hdr(ws, row, ci, h, bg=C_ACCENT, sz=10)
+    row += 1
+
+    pop_label = "Pedestrians per Hour" if stype == "natural_shading" else "Population Density (people/km²)"
+    CDD_ROWS = [
+        ("Annual Cooling Degree Days",   cdd.get("annual_cdd", 735),          "CDD",        "Tel Aviv baseline (21°C base)"),
+        ("Base Temperature",             cdd.get("base_temp_celsius", 21),     "°C",         "Threshold for heat health risk"),
+        ("Heat-Mortality Factor",        cdd.get("heat_mortality_factor", 0.00083), "deaths/person", "Per CDD above threshold"),
+        (pop_label,                      cdd.get("population_density_or_pedestrians", "—"), "people", "Population at risk driver"),
+    ]
+    for param, val, unit, note in CDD_ROWS:
+        _cell(ws, row, 1, param, bold=True)
+        c = ws.cell(row=row, column=2, value=val)
+        c.font = Font(name="Arial", color=BLACK, size=10)
+        c.number_format = "0.00000" if isinstance(val, float) and val < 0.01 else "#,##0.##"
+        c.border = _bd(); c.alignment = Alignment(horizontal="right")
+        _cell(ws, row, 3, unit, align="center")
+        _cell(ws, row, 4, note, color="94A3B8")
+        row += 1
+
+    row += 1
+
+    # ── Section: Specialist Parameters ────────────────────────────────────────
+    _sec(ws, row, 1, "SPECIALIST PARAMETERS", span=4); row += 1
+    for ci, h in enumerate(["Parameter", "Value", "Unit"], 1):
+        _hdr(ws, row, ci, h, bg=C_ACCENT, sz=10)
+    row += 1
+
+    if stype == "natural_shading":
+        SP_ROWS = [
+            ("Heat Reduction Efficiency", sp.get("heat_reduction_efficiency", 0.50), "ratio", True),
+            ("UV Reduction Factor",       sp.get("uv_reduction_factor", 0.75),      "ratio", False),
+            ("Pedestrians per Hour",      sp.get("pedestrians_per_hour", 1200),      "pax/hr", False),
+            ("Functional Unit",           sp.get("functional_unit", "linear meter"), "—",    False),
+        ]
+    else:
+        SP_ROWS = [
+            ("Heat Reduction Efficiency", sp.get("heat_reduction_efficiency", 0.28), "ratio",  True),
+            ("Property Value Uplift %",   sp.get("property_value_uplift_pct", 0.03), "%",      False),
+            ("Roof Longevity Extension",  sp.get("roof_longevity_extension_years", 15), "years", False),
+            ("Roof Area",                 sp.get("roof_area_m2", 1000),               "m²",    False),
+            ("Functional Unit",           sp.get("functional_unit", "sq meter"),      "—",     False),
+        ]
+
+    for param, val, unit, is_editable in SP_ROWS:
+        _cell(ws, row, 1, param, bold=True)
+        c = ws.cell(row=row, column=2, value=val)
+        if is_editable:
+            c.font = Font(name="Arial", bold=True, color=BLUE, size=10)
+            c.fill = PatternFill("solid", fgColor=C_LIGHT)
+        else:
+            c.font = Font(name="Arial", color=BLACK, size=10)
+        c.number_format = "0.00%" if unit in ("%", "ratio") and isinstance(val, float) and val < 1 else "#,##0.##"
+        c.border = _bd(); c.alignment = Alignment(horizontal="right")
+        _cell(ws, row, 3, unit, align="center")
+        row += 1
+
+    row += 1
+
+    # ── Section: Formula Drivers ───────────────────────────────────────────────
+    _sec(ws, row, 1, "YEAR-BY-YEAR FORMULA DRIVERS  (blue = editable, green = linked from Inputs)", span=4); row += 1
+
+    if stype == "natural_shading":
+        mat_val = sp.get("maturity_years", 8)
+        _cell(ws, row, 1, "Maturity Period (years)", bold=True)
+        c = ws.cell(row=row, column=2, value=mat_val)
+        c.font = Font(name="Arial", bold=True, color=BLUE, size=10)
+        c.number_format = "0"; c.border = _bd()
+        c.fill = PatternFill("solid", fgColor=C_LIGHT)
+        c.alignment = Alignment(horizontal="right")
+        _cell(ws, row, 3, "years")
+        _cell(ws, row, 4, "← edit to change maturity ramp", color="94A3B8")
+        MAT_ROW = row; row += 1
+    else:
+        MAT_ROW = None
+
+    _cell(ws, row, 1, "Discount Rate (from Inputs)", bold=True)
+    dr_formula = f"=Inputs!$B${rm['dr']}"
+    c = ws.cell(row=row, column=2, value=dr_formula)
+    c.font = Font(name="Arial", bold=True, color=GREEN_LK, size=10)
+    c.number_format = "0.00%"; c.border = _bd()
+    c.alignment = Alignment(horizontal="right")
+    _cell(ws, row, 3, "%")
+    _cell(ws, row, 4, "← change in Inputs sheet", color="94A3B8")
+    DR_CELL_ROW = row; row += 2
+
+    # ── Section: Year-by-Year Benefit Tables (one per measure) ────────────────
+    _sec(ws, row, 1, "YEAR-BY-YEAR BENEFIT PROJECTION  (formulas — updates automatically)", span=10); row += 1
+
+    # Benefit type definitions per specialist type
+    if stype == "natural_shading":
+        BEN_TYPES = [
+            ("avoided_mortality_npv",      "Avoided Mortality"),
+            ("morbidity_savings_npv",      "Morbidity"),
+            ("skin_cancer_prevention_npv", "Skin Cancer Prev."),
+            ("carbon_sequestration_npv",   "Carbon Seq."),
+            ("runoff_reduction_npv",       "Runoff Reduction"),
+            ("air_quality_npv",            "Air Quality"),
+            ("habitat_creation_npv",       "Habitat"),
+        ]
+    else:
+        BEN_TYPES = [
+            ("avoided_mortality_npv",      "Avoided Mortality"),
+            ("morbidity_savings_npv",      "Morbidity"),
+            ("property_value_uplift_npv",  "Prop. Value Uplift"),
+            ("roof_longevity_npv",        "Roof Longevity"),
+            ("carbon_sequestration_npv",   "Carbon Seq."),
+            ("runoff_reduction_npv",       "Runoff Reduction"),
+            ("air_quality_npv",            "Air Quality"),
+            ("habitat_creation_npv",       "Habitat"),
+        ]
+
+    n_ben = len(BEN_TYPES)
+
+    for mi, m in enumerate(measures):
+        inp_col = get_column_letter(mi + 2)  # Inputs sheet column for this measure
+
+        # Compute benefit fractions from advanced_benefits
+        adv = m.get("advanced_benefits") or {}
+        total_adv = sum((adv.get(k, 0) or 0) for k, _ in BEN_TYPES)
+        if total_adv > 0:
+            fracs = [(adv.get(k, 0) or 0) / total_adv for k, _ in BEN_TYPES]
+        else:
+            equal = 1.0 / n_ben
+            fracs = [equal] * n_ben
+
+        # Sub-table header
+        _sec(ws, row, 1, f"Measure: {m['name']}", span=6 + n_ben); row += 1
+
+        # Column headers (Year | Maturity | Base Benefit | Effective | Disc Factor | PV | benefit cols...)
+        TABLE_HDRS = ["Year", "Maturity\nFactor", f"Base Benefit\n({cur}M/yr)",
+                      f"Eff. Benefit\n({cur}M/yr)", "Disc.\nFactor", f"PV of Benefit\n({cur}M)"]
+        TABLE_HDRS += [label for _, label in BEN_TYPES]
+        for ci, h in enumerate(TABLE_HDRS, 1):
+            _hdr(ws, row, ci, h, bg=C_ACCENT, sz=9, wrap=True)
+        ws.row_dimensions[row].height = 30
+        HDR_ROW = row; row += 1
+        DATA_START = row
+
+        mat_ref  = f"$B${MAT_ROW}" if MAT_ROW else None
+        dr_ref   = f"$B${DR_CELL_ROW}"
+        ben_ref  = f"Inputs!{inp_col}${rm['benefit']}"
+
+        for yr in range(1, 51):
+            r = row
+            # Year
+            c = ws.cell(row=r, column=1, value=yr)
+            c.font = Font(name="Arial", size=9); c.border = _bd()
+            c.alignment = Alignment(horizontal="center")
+
+            # Maturity Factor
+            if stype == "natural_shading" and mat_ref:
+                mat_formula = f"=IF(A{r}<={mat_ref},A{r}/{mat_ref},1)"
+            else:
+                mat_formula = "=1"
+            c = ws.cell(row=r, column=2, value=mat_formula)
+            c.font = Font(name="Arial", color=BLACK, size=9); c.border = _bd()
+            c.number_format = "0.00%"; c.alignment = Alignment(horizontal="right")
+
+            # Base Annual Benefit
+            c = ws.cell(row=r, column=3, value=f"={ben_ref}")
+            c.font = Font(name="Arial", color=GREEN_LK, size=9); c.border = _bd()
+            c.number_format = "#,##0.0"; c.alignment = Alignment(horizontal="right")
+
+            # Effective Benefit
+            c = ws.cell(row=r, column=4, value=f"=B{r}*C{r}")
+            c.font = Font(name="Arial", color=BLACK, size=9); c.border = _bd()
+            c.number_format = "#,##0.0"; c.alignment = Alignment(horizontal="right")
+
+            # Discount Factor
+            c = ws.cell(row=r, column=5, value=f"=1/(1+{dr_ref})^A{r}")
+            c.font = Font(name="Arial", color=BLACK, size=9); c.border = _bd()
+            c.number_format = "0.0000"; c.alignment = Alignment(horizontal="right")
+
+            # PV of Benefit
+            c = ws.cell(row=r, column=6, value=f"=D{r}*E{r}")
+            c.font = Font(name="Arial", color=C_GREEN, bold=True, size=9); c.border = _bd()
+            c.number_format = "#,##0.0"; c.alignment = Alignment(horizontal="right")
+            c.fill = PatternFill("solid", fgColor="F0FDF4")
+
+            # Benefit breakdown columns
+            for bi, (frac, (key, _)) in enumerate(zip(fracs, BEN_TYPES)):
+                c = ws.cell(row=r, column=7+bi, value=f"=D{r}*{frac:.6f}")
+                c.font = Font(name="Arial", color=BLACK, size=9); c.border = _bd()
+                c.number_format = "#,##0.0"; c.alignment = Alignment(horizontal="right")
+
+            row += 1
+
+        DATA_END = row - 1
+
+        # Summary rows
+        row += 1
+        _cell(ws, row, 1, "Total NPV of Benefits", bold=True, bg=C_LIGHT)
+        c = ws.cell(row=row, column=6,
+                    value=f"=SUM(F{DATA_START}:F{DATA_END})")
+        c.font = Font(name="Arial", bold=True, color=C_GREEN, size=10)
+        c.number_format = "#,##0.0"; c.border = _bd()
+        c.fill = PatternFill("solid", fgColor=C_LIGHT)
+        c.alignment = Alignment(horizontal="right")
+        for bi in range(n_ben):
+            c = ws.cell(row=row, column=7+bi,
+                        value=f"=SUM({get_column_letter(7+bi)}{DATA_START}:{get_column_letter(7+bi)}{DATA_END})")
+            c.font = Font(name="Arial", bold=True, color=BLACK, size=10)
+            c.number_format = "#,##0.0"; c.border = _bd()
+            c.fill = PatternFill("solid", fgColor=C_LIGHT)
+            c.alignment = Alignment(horizontal="right")
+        row += 1
+
+        _cell(ws, row, 1, "Total Undiscounted Benefit", bold=False, bg=None)
+        c = ws.cell(row=row, column=4,
+                    value=f"=SUM(D{DATA_START}:D{DATA_END})")
+        c.font = Font(name="Arial", color=BLACK, size=10)
+        c.number_format = "#,##0.0"; c.border = _bd()
+        c.alignment = Alignment(horizontal="right")
+        row += 2
+
+    # ── Column widths ──────────────────────────────────────────────────────────
+    col_w = {1: 10, 2: 12, 3: 18, 4: 18, 5: 12, 6: 18}
+    for bi in range(n_ben):
+        col_w[7+bi] = 16
+    col_w[4] = 22  # notes / params col
+    _widths(ws, col_w)
+    _widths(ws, {1: 10, 2: 14, 3: 20, 4: 20, 5: 13, 6: 20,
+                 **{7+i: 16 for i in range(n_ben)}})
