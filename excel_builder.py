@@ -60,6 +60,7 @@ def build_excel(data: dict, path: str):
     _summary(wb, data, rm)
     if data.get("specialist_type") in ("natural_shading", "green_roof"):
         _specialist_detail(wb, data, rm)
+        _benefit_breakdown(wb, data, rm)
     wb.save(path)
 
 
@@ -576,9 +577,11 @@ def _summary(wb, data, rm):
     for step in [
         "1.  INPUTS sheet — Edit blue cells (CAPEX, OPEX, Benefits, Discount Rate, Time Horizon)",
         "2.  CBA RESULTS sheet — NPV and BCR recalculate automatically from Inputs",
-        "3.  SENSITIVITY sheet — Edit Low/Base/High ranges; BCR table updates automatically",
-        "4.  SUMMARY sheet (this sheet) — BCR and CAPEX values link live from CBA Results",
-        "5.  Never overwrite black or green cells — they contain formulas",
+        "3.  BENEFIT BREAKDOWN sheet — Shows NPV of each benefit category (mortality, morbidity, skin cancer, ecosystem services, property uplift, roof longevity) and their shares of total benefits",
+        "4.  SENSITIVITY sheet — Edit Low/Base/High ranges; BCR table updates automatically",
+        "5.  SPECIALIST DETAIL sheet — Inspect VSL derivation, CDD parameters, specialist parameters, and year-by-year benefit projections",
+        "6.  SUMMARY sheet (this sheet) — BCR and CAPEX values link live from CBA Results; use together with Benefit Breakdown and Specialist Detail when presenting results",
+        "7.  Never overwrite black or green cells — they contain formulas",
     ]:
         c = ws.cell(row=row, column=1, value=step)
         c.font = Font(name="Arial", size=10)
@@ -858,6 +861,10 @@ def _specialist_detail(wb, data, rm):
         c.number_format = "#,##0.0"; c.border = _bd()
         c.fill = PatternFill("solid", fgColor=C_LIGHT)
         c.alignment = Alignment(horizontal="right")
+        # Track this total so Benefit Breakdown can reference it
+        rm.setdefault("spec_benefit_totals", []).append(
+            {"measure_name": m["name"], "row": row, "col": 6}
+        )
         for bi in range(n_ben):
             c = ws.cell(row=row, column=7+bi,
                         value=f"=SUM({get_column_letter(7+bi)}{DATA_START}:{get_column_letter(7+bi)}{DATA_END})")
@@ -875,6 +882,32 @@ def _specialist_detail(wb, data, rm):
         c.alignment = Alignment(horizontal="right")
         row += 2
 
+    # ── Explanatory benefit formulas (text only) ──────────────────────────────
+    _sec(ws, row, 1, "BENEFIT FORMULAS (CONCEPTUAL OVERVIEW)", span=10); row += 1
+    if stype == "natural_shading":
+        expl_lines = [
+            "Avoided mortality: vulnerable_population × base_mortality_rate × heat_mortality_factor × heat_reduction_efficiency × maturity_factor(year) × VSL, aggregated over 50 years and discounted.",
+            "Morbidity savings: daily_hospital_cost (3,928 NIS) × average_length_of_stay (5.2 days) × heat_attributable_cases_avoided × efficiency × maturity_factor.",
+            "Skin cancer prevention: pedestrians_per_hour × operating_hours (≈8) × UV_reduction_factor (0.75) × skin_cancer_incidence_rate × (treatment_cost + VSLY_loss) × maturity_factor.",
+            "Ecosystem services: carbon sequestration (~450 NIS/tree/year × tree_density), runoff reduction (avoided drainage and treatment costs), air quality (PM2.5 reduction × health cost per unit), and habitat creation (200–500 NIS/m²/year biodiversity value).",
+            "All benefit streams apply an 8-year linear biological maturity ramp (year/8 up to year 8, then 1.0) and are discounted over a 50-year horizon."
+        ]
+    else:
+        expl_lines = [
+            "Avoided mortality: catchment_population × base_mortality_rate × heat_mortality_factor × heat_reduction_efficiency × VSL, aggregated over 50 years and discounted.",
+            "Morbidity savings: daily_hospital_cost (3,928 NIS) × average_length_of_stay (5.2 days) × heat_attributable_cases_avoided × heat_reduction_efficiency (≈0.28).",
+            "Property value uplift: roof_area_m² × property_value_per_m² × uplift_pct (≈3%), treated as a one-time capital benefit near Year 1 and discounted.",
+            "Roof longevity extension: (roof_replacement_cost / conventional_roof_lifetime) × roof_longevity_extension_years (≈15), treated as avoided replacement expenditure at end-of-life.",
+            "Ecosystem services: carbon sequestration (~350 NIS/m²/year × green_roof_area), runoff reduction (stormwater_infrastructure_cost_avoided × runoff_reduction_coefficient ≈0.65), air quality (PM2.5 reduction × health cost per unit), and habitat creation (~300 NIS/m²/year × green_roof_area).",
+            "Green roof benefits are assumed to operate at full capacity from Year 1 (no biological maturity ramp) and are discounted over a 50-year horizon."
+        ]
+    for line in expl_lines:
+        c = ws.cell(row=row, column=1, value=line)
+        c.font = Font(name="Arial", size=9, color="475569")
+        c.alignment = Alignment(wrap_text=True, vertical="top")
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=10)
+        row += 1
+
     # ── Column widths ──────────────────────────────────────────────────────────
     col_w = {1: 10, 2: 12, 3: 18, 4: 18, 5: 12, 6: 18}
     for bi in range(n_ben):
@@ -883,3 +916,145 @@ def _specialist_detail(wb, data, rm):
     _widths(ws, col_w)
     _widths(ws, {1: 10, 2: 14, 3: 20, 4: 20, 5: 13, 6: 20,
                  **{7+i: 16 for i in range(n_ben)}})
+
+
+# ── SHEET 6: BENEFIT BREAKDOWN ────────────────────────────────────────────────
+def _benefit_breakdown(wb, data, rm):
+    """Show NPV of each benefit category per measure, plus totals and shares."""
+    ws = wb.create_sheet("Benefit Breakdown")
+    ws.sheet_view.showGridLines = False
+
+    measures = data["measures"]
+    n = rm["n"]
+    cur = f"{data['currency']} ({data['currency_unit']})"
+
+    _hdr(ws, 1, 1, "BENEFIT BREAKDOWN BY CATEGORY", sz=13, span=n+2)
+    _hdr(
+        ws,
+        2,
+        1,
+        f"All benefit values in {cur}  |  Uses advanced_benefits NPVs from specialist analysis",
+        bg=C_MID,
+        fg="CBD5E1",
+        bold=False,
+        sz=9,
+        span=n+2,
+    )
+
+    row = 4
+    _sec(ws, row, 1, f"BENEFIT NPVs BY CATEGORY  [{cur}]", span=n+1); row += 1
+
+    # Header row
+    _hdr(ws, row, 1, "Benefit Category", bg=C_ACCENT, sz=10)
+    for ci, m in enumerate(measures, 2):
+        _hdr(ws, row, ci, m["name"], bg=C_ACCENT, sz=10)
+    _hdr(ws, row, n+2, "Total Across Measures", bg=C_ACCENT, sz=10)
+    row += 1
+
+    BENEFIT_LABELS = [
+        ("avoided_mortality_npv",      "Avoided Mortality — NPV"),
+        ("morbidity_savings_npv",      "Morbidity Savings — NPV"),
+        ("skin_cancer_prevention_npv", "Skin Cancer Prevention — NPV"),
+        ("carbon_sequestration_npv",   "Carbon Sequestration — NPV"),
+        ("runoff_reduction_npv",       "Runoff Reduction — NPV"),
+        ("air_quality_npv",            "Air Quality — NPV"),
+        ("habitat_creation_npv",       "Habitat Creation — NPV"),
+        ("property_value_uplift_npv",  "Property Value Uplift — NPV"),
+        ("roof_longevity_npv",         "Roof Longevity Extension — NPV"),
+    ]
+
+    first_benefit_row = row
+    for key, label in BENEFIT_LABELS:
+        # Only show rows that are used by at least one measure
+        if not any((m.get("advanced_benefits") or {}).get(key) for m in measures):
+            continue
+        _cell(ws, row, 1, label, bold=False, bg="F0FDF4")
+        row_total_cells = []
+        for ci, m in enumerate(measures, 2):
+            val = (m.get("advanced_benefits") or {}).get(key, 0) or 0
+            c = ws.cell(row=row, column=ci, value=val)
+            c.font = Font(name="Arial", color=BLACK, size=10)
+            c.number_format = "#,##0.0"; c.border = _bd()
+            c.alignment = Alignment(horizontal="right")
+            c.fill = PatternFill("solid", fgColor="F0FDF4")
+            row_total_cells.append(c.coordinate)
+        if row_total_cells:
+            total_formula = f"=SUM({row_total_cells[0]}:{row_total_cells[-1]})"
+            c = ws.cell(row=row, column=n+2, value=total_formula)
+            c.font = Font(name="Arial", bold=False, color=BLACK, size=10)
+            c.number_format = "#,##0.0"; c.border = _bd()
+            c.alignment = Alignment(horizontal="right")
+            c.fill = PatternFill("solid", fgColor="F0FDF4")
+        row += 1
+    last_benefit_row = row - 1
+
+    # Total PV of benefits per measure
+    row += 1
+    _cell(ws, row, 1, "Total PV of Benefits (all categories)", bold=True, bg=C_LIGHT)
+    for ci in range(2, n+2):
+        col_letter = get_column_letter(ci)
+        c = ws.cell(
+            row=row,
+            column=ci,
+            value=f"=SUM({col_letter}{first_benefit_row}:{col_letter}{last_benefit_row})",
+        )
+        c.font = Font(name="Arial", bold=True, color=C_GREEN, size=10)
+        c.number_format = "#,##0.0"; c.border = _bd()
+        c.fill = PatternFill("solid", fgColor=C_LIGHT)
+        c.alignment = Alignment(horizontal="right")
+    row += 2
+
+    # Share of total benefits by category (per measure)
+    _sec(ws, row, 1, "SHARE OF TOTAL BENEFITS BY CATEGORY  (per measure)", span=n+1); row += 1
+    _hdr(ws, row, 1, "Benefit Category", bg=C_ACCENT, sz=10)
+    for ci, m in enumerate(measures, 2):
+        _hdr(ws, row, ci, m["name"], bg=C_ACCENT, sz=10)
+    row += 1
+
+    total_row = last_benefit_row + 2  # row where total PV of benefits per measure was written
+    share_start_row = row
+    for r in range(first_benefit_row, last_benefit_row + 1):
+        label = ws.cell(row=r, column=1).value
+        _cell(ws, row, 1, label, bold=False)
+        for ci in range(2, n+2):
+            num = f"{get_column_letter(ci)}{r}"
+            den = f"{get_column_letter(ci)}{total_row}"
+            c = ws.cell(row=row, column=ci, value=f"=IF({den}>0,{num}/{den},0)")
+            c.font = Font(name="Arial", color=BLACK, size=10)
+            c.number_format = "0.0%"; c.border = _bd()
+            c.alignment = Alignment(horizontal="right")
+        row += 1
+
+    row += 2
+    _sec(ws, row, 1, "LINKS TO YEAR-BY-YEAR BENEFITS (Specialist Detail)", span=n+1); row += 1
+    _hdr(ws, row, 1, "Measure", bg=C_ACCENT, sz=10)
+    _hdr(ws, row, 2, "Total NPV of Benefits (Specialist Detail, col F)", bg=C_ACCENT, sz=10)
+    _hdr(ws, row, 3, "Total PV of Benefits (from table above)", bg=C_ACCENT, sz=10)
+    row += 1
+
+    spec_totals = rm.get("spec_benefit_totals", [])
+    for mi, m in enumerate(measures):
+        _cell(ws, row, 1, m["name"], bold=True)
+        # If we have recorded a Specialist Detail total row for this measure, link to it
+        link_cell_val = ""
+        if mi < len(spec_totals):
+            info = spec_totals[mi]
+            spec_row = info["row"]
+            spec_col = info["col"]
+            spec_coord = f"$F${spec_row}" if spec_col == 6 else f"{get_column_letter(spec_col)}{spec_row}"
+            link_cell_val = f"='Specialist Detail'!{spec_coord}"
+        c = ws.cell(row=row, column=2, value=link_cell_val or None)
+        if link_cell_val:
+            c.font = Font(name="Arial", color=GREEN_LK, size=10)
+            c.number_format = "#,##0.0"; c.border = _bd()
+            c.alignment = Alignment(horizontal="right")
+
+        total_col_letter = get_column_letter(mi + 2)
+        c2 = ws.cell(row=row, column=3, value=f"={total_col_letter}{total_row}")
+        c2.font = Font(name="Arial", color=BLACK, size=10)
+        c2.number_format = "#,##0.0"; c2.border = _bd()
+        c2.alignment = Alignment(horizontal="right")
+
+        row += 1
+
+    _widths(ws, {1: 34, **{i+2: 18 for i in range(n)}, n+2: 22})
