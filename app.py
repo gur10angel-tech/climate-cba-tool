@@ -3,6 +3,7 @@ import anthropic
 import json
 from excel_builder import build_excel
 import tempfile, os
+import markdown as md_lib
 
 st.set_page_config(page_title="Climate CBA Tool", page_icon="🌍", layout="wide")
 
@@ -65,6 +66,44 @@ h1 {
     border-color: #16a34a !important;
     box-shadow: 0 0 0 1px rgba(22, 163, 74, 0.35) !important;
     background: #ffffff !important;
+}
+
+.stTextInput input:focus-visible {
+    outline: none !important;
+}
+
+[data-baseweb="input"]:focus-within {
+    outline: none !important;
+    box-shadow: none !important;
+}
+
+.stTextInput > div:focus-within {
+    outline: none !important;
+    border: none !important;
+}
+
+.chat-msg-ai table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.5rem 0;
+}
+
+.chat-msg-ai th, .chat-msg-ai td {
+    padding: 6px 10px;
+    border: 1px solid #d1fae5;
+    font-size: 0.88rem;
+}
+
+.chat-msg-ai th {
+    background: #ecfdf5;
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: #022c22;
+}
+
+.chat-msg-ai td:first-child {
+    font-size: 0.97rem;
+    font-weight: 600;
 }
 
 .stButton > button {
@@ -178,7 +217,10 @@ Extract all data and produce a JSON object for the CBA model. Respond ONLY with 
     {"name": "Discount Rate", "base": 0.035, "low": 0.02, "high": 0.07, "unit": "%"},
     {"name": "Annual Benefit", "base": 1.0, "low": 0.5, "high": 1.5, "unit": "multiplier"}
   ],
-  "key_assumptions": "Main assumptions and limitations",
+  "key_assumptions": [
+    {"text": "Main assumption or limitation", "source": "Source or 'Methodology default'"},
+    {"text": "Another assumption", "source": "Literature reference or user-provided"}
+  ],
   "data_gaps": "What additional data would improve this"
 }
 
@@ -294,7 +336,14 @@ Respond ONLY with valid JSON, no markdown fences:
     }
   ],
   "sensitivity_vars": [],
-  "key_assumptions": "50-year urban shading CBA with 1 m of shaded boulevard as the functional unit; VSL from OECD 2005 baseline adjusted to 2024 Israel via CPI and PPP; CDD baseline 735 (Tel Aviv) driving heat-related mortality and morbidity; 8-year linear biological maturity ramp applied to all benefit streams; heat reduction efficiency fixed at 50%; direct (thermal comfort, UV/skin cancer) and indirect (carbon, runoff, air quality, habitat) ecosystem services monetised in NIS millions.",
+  "key_assumptions": [
+    {"text": "50-year time horizon with 1 linear meter of shaded boulevard as functional unit", "source": "Methodology default — standard urban CBA horizon"},
+    {"text": "VSL from OECD 2005 baseline adjusted to 2024 Israel via CPI (×1.68) and PPP (×0.89), converted at 3.7 NIS/USD", "source": "OECD (2005); US BLS CPI; World Bank PPP data"},
+    {"text": "CDD baseline 735 (Tel Aviv, 21°C base), heat-mortality factor 0.00083", "source": "Israeli Meteorological Service; Gasparrini et al. (2017)"},
+    {"text": "8-year linear biological maturity ramp applied to all benefit streams (year n ÷ 8)", "source": "Nowak et al. (2002), urban tree growth literature"},
+    {"text": "Heat reduction efficiency fixed at 50%; UV reduction factor 0.75", "source": "Shashua-Bar & Hoffman (2000); WHO UV Index guidelines"},
+    {"text": "Ecosystem service values (carbon 450 NIS/tree/yr, habitat 200-500 NIS/m²/yr) from literature", "source": "TEEB (2010); Israeli carbon market reference prices"}
+  ],
   "data_gaps": "Localized mortality and morbidity rates, precise pedestrians-per-hour counts, city-specific CAPEX/OPEX cost data, and locally derived ecosystem service valuation coefficients."
 }
 
@@ -408,7 +457,14 @@ Respond ONLY with valid JSON, no markdown fences:
     }
   ],
   "sensitivity_vars": [],
-  "key_assumptions": "50-year green roof CBA with 1 m² of functional green roof as the functional unit; VSL from OECD 2005 baseline adjusted to 2024 Israel via CPI and PPP; CDD baseline 735 (Tel Aviv) driving heat-related mortality and morbidity; no biological maturity ramp (benefits at full capacity from Year 1); heat reduction efficiency fixed at 28%; inclusion of capital property value uplift (3% of property value per m²), roof longevity extension, and annual ecosystem services (carbon, runoff, air quality, habitat) monetised in NIS millions.",
+  "key_assumptions": [
+    {"text": "50-year time horizon with 1 m² of green roof as functional unit", "source": "Methodology default — standard green infrastructure CBA horizon"},
+    {"text": "VSL from OECD 2005 baseline adjusted to 2024 Israel via CPI (×1.68) and PPP (×0.89), converted at 3.7 NIS/USD", "source": "OECD (2005); US BLS CPI; World Bank PPP data"},
+    {"text": "CDD baseline 735 (Tel Aviv, 21°C base), heat-mortality factor 0.00083", "source": "Israeli Meteorological Service; Gasparrini et al. (2017)"},
+    {"text": "No maturity ramp — green roof benefits operate at full capacity from Year 1", "source": "Berghage et al. (2009); green roof engineering literature"},
+    {"text": "Heat reduction efficiency 28%; property value uplift 3% of roof area value", "source": "Oberndorfer et al. (2007); Fuerst & McAllister (2011)"},
+    {"text": "Roof longevity extension 15 years over conventional roof; ecosystem services (carbon 350 NIS/m²/yr, habitat 300 NIS/m²/yr)", "source": "Berghage et al. (2009); TEEB (2010)"}
+  ],
   "data_gaps": "Local building-level property values and turnover rates, detailed residential density and exposure, city-specific CAPEX/OPEX for green roofs, and refined local ecosystem service valuation coefficients."
 }
 
@@ -454,8 +510,11 @@ with chat_container:
         </div>
         """, unsafe_allow_html=True)
     for msg in st.session_state.messages:
-        css = "chat-msg-user" if msg["role"] == "user" else "chat-msg-ai"
-        st.markdown(f'<div class="{css}">{msg["content"]}</div>', unsafe_allow_html=True)
+        if msg["role"] == "user":
+            st.markdown(f'<div class="chat-msg-user">{msg["content"]}</div>', unsafe_allow_html=True)
+        else:
+            html_content = md_lib.markdown(msg["content"], extensions=["tables", "nl2br"])
+            st.markdown(f'<div class="chat-msg-ai">{html_content}</div>', unsafe_allow_html=True)
 
 # ── Input ──────────────────────────────────────────────────────────────────────
 if st.session_state.stage != "done":

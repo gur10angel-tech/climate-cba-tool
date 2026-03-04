@@ -51,6 +51,19 @@ def _widths(ws, d):
     for col, w in d.items():
         ws.column_dimensions[get_column_letter(col)].width = w
 
+def _auto_widths(ws, min_w=10, max_w=55):
+    """Auto-fit column widths based on cell content length."""
+    for col_cells in ws.columns:
+        max_len = 0
+        col_letter = col_cells[0].column_letter
+        for cell in col_cells:
+            try:
+                cell_len = len(str(cell.value)) if cell.value is not None else 0
+                max_len = max(max_len, cell_len)
+            except Exception:
+                pass
+        ws.column_dimensions[col_letter].width = min(max_w, max(min_w, max_len + 2))
+
 
 def build_excel(data: dict, path: str):
     wb = Workbook()
@@ -58,6 +71,7 @@ def build_excel(data: dict, path: str):
     _results(wb, data, rm)
     _sensitivity(wb, data, rm)
     _summary(wb, data, rm)
+    _benefit_detail(wb, data, rm)
     if data.get("specialist_type") in ("natural_shading", "green_roof"):
         _specialist_detail(wb, data, rm)
         _benefit_breakdown(wb, data, rm)
@@ -169,11 +183,37 @@ def _inputs(wb, data):
     row += 2
 
     _sec(ws, row, 1, "KEY ASSUMPTIONS & LIMITATIONS", span=n+3); row += 1
-    c = ws.cell(row=row, column=1, value=data.get("key_assumptions", ""))
-    c.font = Font(name="Arial", size=9, color="475569")
-    c.alignment = Alignment(wrap_text=True, vertical="top")
-    ws.merge_cells(start_row=row, start_column=1, end_row=row+2, end_column=n+3)
-    ws.row_dimensions[row].height = 48; row += 3
+    # Header row for assumptions table
+    _hdr(ws, row, 1, "#", bg=C_ACCENT, sz=9)
+    ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=n+2)
+    _hdr(ws, row, 2, "Assumption / Limitation", bg=C_ACCENT, sz=9)
+    _hdr(ws, row, n+3, "Source", bg=C_ACCENT, sz=9)
+    row += 1
+    # Parse assumptions — list of {text, source} or plain string
+    raw_assumptions = data.get("key_assumptions", "")
+    if isinstance(raw_assumptions, list):
+        assumption_list = raw_assumptions
+    else:
+        # Split plain string into individual assumptions
+        import re
+        parts = re.split(r'(?<=[.;])\s+', str(raw_assumptions))
+        assumption_list = [{"text": p.strip(" ;."), "source": ""} for p in parts if p.strip(" ;.")]
+    for idx, item in enumerate(assumption_list, 1):
+        text   = item.get("text", item) if isinstance(item, dict) else str(item)
+        source = item.get("source", "") if isinstance(item, dict) else ""
+        _cell(ws, row, 1, str(idx), bold=True, align="center")
+        c = ws.cell(row=row, column=2, value=text)
+        c.font = Font(name="Arial", size=9, color="475569")
+        c.alignment = Alignment(wrap_text=True, vertical="top")
+        c.border = _bd()
+        ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=n+2)
+        c2 = ws.cell(row=row, column=n+3, value=source)
+        c2.font = Font(name="Arial", size=9, color="475569", italic=True)
+        c2.alignment = Alignment(wrap_text=True, vertical="top")
+        c2.border = _bd()
+        ws.row_dimensions[row].height = 28
+        row += 1
+    row += 1
 
     _cell(ws, row, 1, "Data Gaps:", bold=True)
     c = ws.cell(row=row, column=2, value=data.get("data_gaps", ""))
@@ -190,7 +230,7 @@ def _inputs(wb, data):
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=4)
         row += 1
 
-    _widths(ws, {1: 30, **{i+2: 22 for i in range(n)}, n+2: 28})
+    _auto_widths(ws)
 
     return {"dr": DR_ROW, "yr": YR_ROW,
             "capex": CAPEX_ROW, "opex": OPEX_ROW,
@@ -378,7 +418,7 @@ def _results(wb, data, rm):
     chart.set_categories(cats_ref)
     ws.add_chart(chart, f"A{chart_r+n+3}")
 
-    _widths(ws, {1: 32, **{i+2: 22 for i in range(n)}, n+2: 20})
+    _auto_widths(ws)
 
     # Expose BCR_ROW for summary sheet
     rm["results_bcr_row"]   = BCR_ROW
@@ -411,18 +451,24 @@ def _sensitivity(wb, data, rm):
 
     _hdr(ws, 1, 1, "SENSITIVITY ANALYSIS", sz=13, span=n+5)
     _hdr(ws, 2, 1,
-         "Edit Low / Base / High values (blue cells). BCR table below recalculates automatically via formulas.",
+         "Each parameter is analysed independently. Edit the blue cells in each range table; BCR results update automatically.",
          bg=C_MID, fg="CBD5E1", bold=False, sz=9, span=n+5)
 
+    dr_inp = f"Inputs!$B${rm['dr']}"
     row = 4
-    _sec(ws, row, 1, "PARAMETER RANGES  (edit blue cells)", span=5); row += 1
-    for ci, h in enumerate(["Variable", "Low", "Base", "High", "Unit"], 1):
-        _hdr(ws, row, ci, h, bg=C_ACCENT, sz=10)
-    row += 1
 
-    sv_rows = {}
     for sv in sens_vars:
-        _cell(ws, row, 1, sv["name"], bold=True)
+        sv_name = sv["name"]
+
+        # ── Parameter section header ───────────────────────────────────────────
+        _sec(ws, row, 1, f"PARAMETER: {sv_name.upper()}", span=n+4); row += 1
+
+        # ── Range table (Variable | Low | Base | High | Unit) ─────────────────
+        for ci, h in enumerate(["Variable", "Low", "Base", "High", "Unit"], 1):
+            _hdr(ws, row, ci, h, bg=C_ACCENT, sz=10)
+        row += 1
+
+        _cell(ws, row, 1, sv_name, bold=True)
         for col_i, val in enumerate([sv["low"], sv["base"], sv["high"]], 2):
             c = ws.cell(row=row, column=col_i, value=val)
             c.font = Font(name="Arial", bold=True, color=BLUE, size=10)
@@ -431,38 +477,29 @@ def _sensitivity(wb, data, rm):
             c.fill = PatternFill("solid", fgColor=C_LIGHT)
             c.alignment = Alignment(horizontal="right")
         _cell(ws, row, 5, sv["unit"])
-        sv_rows[sv["name"]] = {
+        sv_r = {
             "low":  f"$B${row}",
             "base": f"$C${row}",
             "high": f"$D${row}"
         }
+        row += 2  # blank row between range table and BCR table
+
+        # ── BCR sensitivity table for this parameter ───────────────────────────
+        _hdr(ws, row, 1, "Scenario", bg=C_ACCENT, sz=10)
+        for ci, m in enumerate(measures, 2):
+            _hdr(ws, row, ci, m["name"], bg=C_ACCENT, sz=10)
         row += 1
 
-    row += 1
-    _sec(ws, row, 1, "BCR SENSITIVITY TABLE  (formulas — updates automatically)", span=n+3); row += 1
-    _hdr(ws, row, 1, "Variable", bg=C_ACCENT, sz=10)
-    _hdr(ws, row, 2, "Scenario", bg=C_ACCENT, sz=10)
-    for ci, m in enumerate(measures, 3):
-        _hdr(ws, row, ci, m["name"], bg=C_ACCENT, sz=10)
-    row += 1
-
-    dr_inp = f"Inputs!$B${rm['dr']}"
-
-    for sv in sens_vars:
-        sv_name = sv["name"]
-        sv_r = sv_rows.get(sv_name, {})
-
-        for scenario, col_key, color in [("Low", "low", C_RED),
+        for scenario, col_key, color in [("Low",  "low",  C_RED),
                                           ("Base", "base", BLACK),
                                           ("High", "high", C_GREEN)]:
             param_ref = sv_r.get(col_key, "$C$7")
             bg = C_LIGHT if scenario == "Base" else None
 
-            _cell(ws, row, 1, sv_name if scenario == "Low" else "", bold=(scenario == "Low"))
-            _cell(ws, row, 2, scenario, color=color, bg=bg)
+            _cell(ws, row, 1, scenario, color=color, bold=(scenario == "Base"), bg=bg)
 
             for mi in range(n):
-                ci = mi + 2  # column in Inputs sheet (measures start at col 2)
+                ci = mi + 2
                 capex = f"Inputs!{get_column_letter(ci)}${rm['capex']}"
                 opex  = f"Inputs!{get_column_letter(ci)}${rm['opex']}"
                 ben   = f"Inputs!{get_column_letter(ci)}${rm['benefit']}"
@@ -470,24 +507,24 @@ def _sensitivity(wb, data, rm):
 
                 pv_cost_override = None
                 if sv_name == "Discount Rate":
-                    dr_use = param_ref
+                    dr_use   = param_ref
                     ben_term = ben
                 elif sv_name == "Annual Benefit":
-                    dr_use = dr_inp
+                    dr_use   = dr_inp
                     ben_term = f"({ben}*{param_ref})"
                 elif sv_name == "CAPEX Variation":
-                    dr_use = dr_inp
+                    dr_use   = dr_inp
                     ben_term = ben
-                    pv_cost_override = f"(({capex}*{param_ref})+{opex}/{dr_use}*(1-(1+{dr_use})^(-{life})))"
+                    pv_cost_override = f"(({capex}*{param_ref})+{opex}/{dr_inp}*(1-(1+{dr_inp})^(-{life})))"
                 elif sv_name == "Activity Level":
-                    dr_use = dr_inp
+                    dr_use   = dr_inp
                     ben_term = f"({ben}*{param_ref})"
                 elif sv_name == "Heat Reduction Efficiency":
-                    dr_use = dr_inp
+                    dr_use   = dr_inp
                     base_eff = data.get("specialist_params", {}).get("heat_reduction_efficiency", 0.5)
                     ben_term = f"({ben}*{param_ref}/{base_eff})"
                 else:
-                    dr_use = dr_inp
+                    dr_use   = dr_inp
                     ben_term = ben
 
                 pv_ben  = f"({ben_term}/{dr_use}*(1-(1+{dr_use})^(-{life})))"
@@ -495,29 +532,29 @@ def _sensitivity(wb, data, rm):
                           f"({capex}+{opex}/{dr_use}*(1-(1+{dr_use})^(-{life})))"
                 formula = f"=IF({dr_use}>0,IF({pv_cost}>0,{pv_ben}/{pv_cost},0),0)"
 
-                c = ws.cell(row=row, column=mi+3, value=formula)
+                c = ws.cell(row=row, column=mi+2, value=formula)
                 c.font = Font(name="Arial", color=color, bold=(scenario == "Base"), size=10)
                 c.number_format = "0.00"; c.border = _bd()
                 c.alignment = Alignment(horizontal="right")
                 if bg: c.fill = PatternFill("solid", fgColor=C_LIGHT)
             row += 1
-        row += 1  # blank between variables
 
-    row += 1
+        row += 3  # blank rows before next parameter
+
     _sec(ws, row, 1, "INSTRUCTIONS", span=6); row += 1
     for inst in [
-        "1. Edit Low / Base / High values in the table above (blue cells only)",
-        "2. BCR values in the table update automatically — no manual recalculation needed",
+        "1. Each parameter block above has its own range table (blue editable cells) followed by BCR results",
+        "2. BCR values recalculate automatically — no manual action needed",
         "3. 'Discount Rate': enter as decimal (e.g. 0.02 = 2%)",
-        "4. 'Annual Benefit' multiplier: 1.0 = base, 0.5 = 50% of base benefits, 1.5 = 150%",
-        "5. Add more sensitivity variables by editing the app and rerunning the analysis",
+        "4. Multiplier parameters: 1.0 = base case, 0.5 = 50% of base, 1.5 = 150%",
+        "5. Parameters are analysed one at a time (all-else-equal); results are not combined",
     ]:
         c = ws.cell(row=row, column=1, value=inst)
         c.font = Font(name="Arial", size=9, color="475569")
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
         row += 1
 
-    _widths(ws, {1: 26, 2: 12, 3: 14, 4: 14, 5: 12, **{i+5: 22 for i in range(n)}})
+    _auto_widths(ws)
 
 
 # ── SHEET 4: SUMMARY ──────────────────────────────────────────────────────────
@@ -588,7 +625,7 @@ def _summary(wb, data, rm):
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
         row += 1
 
-    _widths(ws, {1: 30, 2: 18, 3: 18, 4: 16, 5: 18})
+    _auto_widths(ws)
 
 
 # ── SHEET 5: SPECIALIST DETAIL ────────────────────────────────────────────────
@@ -794,8 +831,6 @@ def _specialist_detail(wb, data, rm):
         # Column headers (Year | Maturity | Base Benefit | Effective | Disc Factor | PV | benefit cols...)
         TABLE_HDRS = ["Year", "Maturity\nFactor", f"Base Benefit\n({cur}M/yr)",
                       f"Eff. Benefit\n({cur}M/yr)", "Disc.\nFactor", f"PV of Benefit\n({cur}M)"]
-        TABLE_HDRS += [label for _, label in BEN_TYPES]
-        for ci, h in enumerate(TABLE_HDRS, 1):
             _hdr(ws, row, ci, h, bg=C_ACCENT, sz=9, wrap=True)
         ws.row_dimensions[row].height = 30
         HDR_ROW = row; row += 1
@@ -911,13 +946,7 @@ def _specialist_detail(wb, data, rm):
         row += 1
 
     # ── Column widths ──────────────────────────────────────────────────────────
-    col_w = {1: 10, 2: 12, 3: 18, 4: 18, 5: 12, 6: 18}
-    for bi in range(n_ben):
-        col_w[7+bi] = 16
-    col_w[4] = 22  # notes / params col
-    _widths(ws, col_w)
-    _widths(ws, {1: 10, 2: 14, 3: 20, 4: 20, 5: 13, 6: 20,
-                 **{7+i: 16 for i in range(n_ben)}})
+    _auto_widths(ws)
 
 
 # ── SHEET 6: BENEFIT BREAKDOWN ────────────────────────────────────────────────
@@ -1059,4 +1088,178 @@ def _benefit_breakdown(wb, data, rm):
 
         row += 1
 
-    _widths(ws, {1: 34, **{i+2: 18 for i in range(n)}, n+2: 22})
+    _auto_widths(ws)
+
+
+# ── SHEET 7: BENEFIT DETAIL ───────────────────────────────────────────────────
+# Sources and calculation methodology for every benefit type
+_BENEFIT_SOURCES = {
+    "avoided_mortality":        "VSL: OECD (2005) baseline, CPI/PPP-adjusted; Heat-mortality factor: Gasparrini et al. (2017) Lancet",
+    "morbidity_savings":        "Hospitalization cost: Israeli Health Ministry (2024); Average LOS: clinical literature; Cases-avoided: CDD model",
+    "skin_cancer_prevention":   "UV-cancer incidence: WHO/ICO Global Cancer Observatory; Treatment costs: Ministry of Health; UV reduction: solar geometry literature",
+    "carbon_sequestration":     "Carbon price: Israeli carbon market reference (2024); Sequestration rate: urban forestry literature (Nowak et al. 2002)",
+    "runoff_reduction":         "Runoff coefficient: EPA Stormwater BMP Guide; Infrastructure cost avoided: local municipality data",
+    "air_quality":              "PM2.5 health cost: WHO Air Quality Guidelines (2021); PM removal rates: vegetation science literature",
+    "habitat_creation":         "Biodiversity value: TEEB (2010); 200-500 NIS/m2/yr range from Israeli urban ecology studies",
+    "property_value_uplift":    "Hedonic pricing meta-analysis: Fuerst & McAllister (2011); 3% uplift on adjacent property value per m2 green roof",
+    "roof_longevity":           "Lifespan extension: Berghage et al. (2009) GRHC; Conventional roof replacement cost: industry data",
+    "thermal_comfort":          "Thermal comfort monetisation: ASHRAE 55 standard; avoided cooling cost literature",
+    "flood_protection":         "Avoided damage: national flood risk databases; infrastructure replacement cost method",
+    "tourism":                  "Visitor spending: local tourism authority data; contingent valuation literature",
+    "energy_savings":           "Energy reduction per m2 shade/green roof: building physics simulation literature",
+    "default":                  "Literature estimate - see data_source field in Inputs sheet for measure-specific citations",
+}
+
+_BENEFIT_CALCS = {
+    "avoided_mortality":      "Population x base mortality rate x heat-mortality factor x heat reduction efficiency x maturity factor x VSL",
+    "morbidity_savings":      "Hospitalization cost (3,928 NIS/day) x avg LOS (5.2 days) x heat-attributable cases avoided x efficiency x maturity",
+    "skin_cancer_prevention": "Pedestrians/hr x operating hours (8) x UV reduction (0.75) x incidence rate x (treatment cost + VSLY) x maturity",
+    "carbon_sequestration":   "Carbon price (NIS/unit) x sequestration rate x number of trees or roof area",
+    "runoff_reduction":       "Runoff reduction coefficient x stormwater infrastructure cost avoided per m3",
+    "air_quality":            "PM2.5 removed (kg/yr) x health cost per kg x affected population",
+    "habitat_creation":       "Green area (m2) x biodiversity unit value (200-500 NIS/m2/yr)",
+    "property_value_uplift":  "Roof area (m2) x property value per m2 x uplift fraction (0.03) - one-time Year 1 benefit",
+    "roof_longevity":         "(Roof replacement cost / conventional roof life) x longevity extension years (15) - lump sum at end-of-life",
+    "thermal_comfort":        "Avoided cooling energy (kWh/yr) x electricity tariff + comfort value to occupants",
+    "flood_protection":       "Expected annual damage avoided x probability of flood event",
+    "tourism":                "Additional visitors x average spending per visitor x attribution fraction",
+    "energy_savings":         "Energy reduction (kWh/m2/yr) x green area x electricity tariff",
+    "default":                "Net present value of annual benefit stream discounted at project discount rate",
+}
+
+_BENEFIT_ENDO_EXOG = {
+    "avoided_mortality":      ("Endogenic: population count, project area\nExogenic: VSL (OECD), heat-mortality factor, CDD baseline", "Exogenic"),
+    "morbidity_savings":      ("Endogenic: project area, efficiency factor\nExogenic: hospitalization cost, LOS, CDD incidence rate", "Exogenic"),
+    "skin_cancer_prevention": ("Endogenic: pedestrian counts, operating hours\nExogenic: UV reduction rate, incidence, treatment cost, VSLY", "Exogenic"),
+    "carbon_sequestration":   ("Endogenic: number of trees / roof area\nExogenic: carbon price, sequestration rate per tree", "Exogenic"),
+    "runoff_reduction":       ("Endogenic: catchment area, surface type\nExogenic: runoff coefficients, infrastructure cost/m3", "Exogenic"),
+    "air_quality":            ("Endogenic: green area, local traffic levels\nExogenic: PM removal rate, health cost per kg PM2.5", "Exogenic"),
+    "habitat_creation":       ("Endogenic: green area (m2)\nExogenic: biodiversity unit value (literature range)", "Exogenic"),
+    "property_value_uplift":  ("Endogenic: roof area, local property values\nExogenic: uplift fraction from hedonic pricing literature", "Mixed"),
+    "roof_longevity":         ("Endogenic: roof area, local replacement cost\nExogenic: longevity extension years (literature)", "Mixed"),
+    "thermal_comfort":        ("Endogenic: building area, occupancy\nExogenic: energy tariff, thermal comfort value", "Mixed"),
+    "flood_protection":       ("Endogenic: protected area, asset values\nExogenic: damage curves, flood return period", "Mixed"),
+    "tourism":                ("Endogenic: project location, visitor estimates\nExogenic: average visitor spending, attribution factor", "Mixed"),
+    "energy_savings":         ("Endogenic: green area, building type\nExogenic: energy reduction rate (simulation), electricity tariff", "Mixed"),
+    "default":                ("Endogenic: project-specific inputs\nExogenic: literature unit values and multipliers", "Mixed"),
+}
+
+
+def _benefit_detail(wb, data, rm):
+    """Sheet: Benefit Detail - calculations, assumptions, sources per benefit type."""
+    ws = wb.create_sheet("Benefit Detail")
+    ws.sheet_view.showGridLines = False
+
+    measures = data["measures"]
+    stype    = data.get("specialist_type")
+    cur      = f"{data['currency']} ({data['currency_unit']})"
+
+    _hdr(ws, 1, 1, "BENEFIT DETAIL - CALCULATIONS, ASSUMPTIONS & SOURCES", sz=13, span=6)
+    _hdr(ws, 2, 1,
+         f"All monetary values in {cur}  |  Endogenic = project-specific inputs  |  Exogenic = external literature values",
+         bg=C_MID, fg="CBD5E1", bold=False, sz=9, span=6)
+
+    row = 4
+
+    # Collect all unique benefit types across all measures
+    all_benefit_types = []
+    seen = set()
+    for m in measures:
+        for bt in (m.get("benefit_types") or []):
+            key = bt.strip().lower().replace(" ", "_")
+            if key not in seen:
+                all_benefit_types.append(bt.strip())
+                seen.add(key)
+    # Also include advanced_benefits keys for specialist flows
+    if stype in ("natural_shading", "green_roof"):
+        adv_keys = [
+            "avoided_mortality", "morbidity_savings", "skin_cancer_prevention",
+            "carbon_sequestration", "runoff_reduction", "air_quality", "habitat_creation",
+            "property_value_uplift", "roof_longevity",
+        ]
+        for ak in adv_keys:
+            if ak not in seen:
+                all_benefit_types.append(ak.replace("_", " ").title())
+                seen.add(ak)
+
+    for bt_label in all_benefit_types:
+        raw_key = bt_label.strip().lower().replace(" ", "_")
+        # Remove common suffixes
+        key = raw_key.replace("_npv", "").replace("_-_npv", "")
+
+        calc    = _BENEFIT_CALCS.get(key,   _BENEFIT_CALCS["default"])
+        source  = _BENEFIT_SOURCES.get(key, _BENEFIT_SOURCES["default"])
+        endo_exog_text, de_label = _BENEFIT_ENDO_EXOG.get(key, _BENEFIT_ENDO_EXOG["default"])
+        de_color = C_GREEN if de_label == "Exogenic" else C_ACCENT if de_label == "Endogenic" else C_AMBER
+
+        _sec(ws, row, 1, bt_label.upper(), span=6); row += 1
+
+        for ci, h in enumerate(["Field", "Detail"], 1):
+            _hdr(ws, row, ci, h, bg=C_ACCENT, sz=9)
+        ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=6)
+        row += 1
+
+        rows_detail = [
+            ("Calculation Method",              calc),
+            ("Data Type",                       de_label),
+            ("Endogenic / Exogenic Parameters", endo_exog_text),
+            ("Source / Citation",               source),
+        ]
+        # Add NPV per measure if available
+        for m in measures:
+            ab = m.get("advanced_benefits") or {}
+            npv_key = key + "_npv"
+            npv_val = ab.get(npv_key)
+            if npv_val is not None:
+                rows_detail.append((f"NPV - {m['name']}", f"{npv_val:,.2f} {cur}"))
+
+        for field, detail in rows_detail:
+            c1 = ws.cell(row=row, column=1, value=field)
+            c1.font = Font(name="Arial", bold=True, size=9, color=BLACK)
+            c1.border = _bd()
+            c1.alignment = Alignment(vertical="top")
+
+            c2 = ws.cell(row=row, column=2, value=str(detail))
+            c2.font = Font(name="Arial", size=9, color="475569")
+            c2.alignment = Alignment(wrap_text=True, vertical="top")
+            c2.border = _bd()
+            ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=6)
+            ws.row_dimensions[row].height = max(20, len(str(detail)) // 8 * 12 + 12)
+
+            if field == "Data Type":
+                c2.font = Font(name="Arial", bold=True, size=9, color=de_color)
+
+            row += 1
+
+        row += 1  # blank between benefit types
+
+    # VSL derivation summary (specialist only)
+    if stype in ("natural_shading", "green_roof"):
+        vsl = data.get("vsl_params", {})
+        if vsl:
+            row += 1
+            _sec(ws, row, 1, "VSL DERIVATION (Value of Statistical Life)", span=6); row += 1
+            for ci, h in enumerate(["Parameter", "Value", "Notes"], 1):
+                _hdr(ws, row, ci, h, bg=C_ACCENT, sz=9)
+            ws.merge_cells(start_row=row, start_column=3, end_row=row, end_column=6)
+            row += 1
+            vsl_rows = [
+                ("Base VSL (OECD 2005, USD)",             f"${vsl.get('base_vsl_usd_2005', 3000000):,.0f}",  "OECD (2005) recommended value for developed countries"),
+                ("CPI Multiplier 2005-2024",               f"x{vsl.get('cpi_multiplier', 1.68)}",             "US BLS CPI ratio: CPI2024/CPI2005"),
+                ("GDP PPP Adjustment",                     f"x{vsl.get('gdp_ppp_ratio', 0.89)}",              "Israel GDP/capita PPP divided by OECD average; World Bank data"),
+                ("FX Rate (USD to local)",                 f"x{vsl.get('usd_to_local_currency', 3.7)}",       "Average NIS/USD exchange rate"),
+                ("Computed VSL (local currency)",          f"{vsl.get('computed_vsl_local', 12800000):,.0f}", "= Base x CPI x PPP x FX"),
+                ("Life Expectancy Remaining",              f"{vsl.get('life_expectancy_remaining', 35)} yrs",  "Default: 35 years for working-age demographic"),
+                ("VSLY (Value of Statistical Life-Year)",  f"{vsl.get('computed_vsly_local', 365714):,.0f}",  "= VSL divided by life expectancy remaining"),
+            ]
+            for param, val, note in vsl_rows:
+                _cell(ws, row, 1, param, bold=True)
+                _cell(ws, row, 2, val, align="right")
+                c = ws.cell(row=row, column=3, value=note)
+                c.font = Font(name="Arial", size=9, color="475569", italic=True)
+                c.border = _bd()
+                c.alignment = Alignment(wrap_text=True)
+                ws.merge_cells(start_row=row, start_column=3, end_row=row, end_column=6)
+                row += 1
+
+    _auto_widths(ws)
