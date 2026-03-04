@@ -10,46 +10,109 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500&display=swap');
 * { font-family: 'IBM Plex Sans', sans-serif; }
-.stApp { background: #f8f9fa; }
-.block-container { max-width: 860px; padding: 2.5rem 2rem; }
-h1 { font-size: 1.6rem; font-weight: 500; color: #1a1a2e; letter-spacing: -0.02em; }
+
+.stApp {
+    background: #f4f7f5;
+}
+
+.block-container {
+    max-width: 860px;
+    padding: 2.5rem 2rem;
+    background: #ffffff;
+    border-radius: 16px;
+    box-shadow: 0 18px 45px rgba(15, 23, 42, 0.06);
+}
+
+h1 {
+    font-size: 1.6rem;
+    font-weight: 500;
+    color: #052e16;
+    letter-spacing: -0.02em;
+}
+
 .chat-msg-user {
-    background: #1a1a2e; color: #fff;
-    border-radius: 12px 12px 2px 12px;
-    padding: 0.75rem 1rem; margin: 0.5rem 0; max-width: 80%; margin-left: auto;
+    background: #065f46;
+    color: #f9fafb;
+    border-radius: 12px 12px 4px 12px;
+    padding: 0.75rem 1rem;
+    margin: 0.5rem 0;
+    max-width: 80%;
+    margin-left: auto;
     font-size: 0.92rem;
 }
+
 .chat-msg-ai {
-    background: #fff; color: #1a1a2e; border: 1px solid #e2e8f0;
-    border-radius: 12px 12px 12px 2px;
-    padding: 0.75rem 1rem; margin: 0.5rem 0; max-width: 85%;
-    font-size: 0.92rem; line-height: 1.6;
+    background: #f9fafb;
+    color: #022c22;
+    border: 1px solid #d1fae5;
+    border-radius: 12px 12px 12px 4px;
+    padding: 0.75rem 1rem;
+    margin: 0.5rem 0;
+    max-width: 85%;
+    font-size: 0.92rem;
+    line-height: 1.6;
 }
+
 .stTextInput input {
-    border: 1.5px solid #e2e8f0 !important; border-radius: 8px !important;
-    font-size: 0.95rem !important; padding: 0.6rem 0.9rem !important;
+    border: 1.5px solid #d4d4d4 !important;
+    border-radius: 999px !important;
+    font-size: 0.95rem !important;
+    padding: 0.6rem 0.9rem !important;
+    background: #f9fafb !important;
 }
-.stTextInput input:focus { border-color: #3b82f6 !important; box-shadow: none !important; }
+
+.stTextInput input:focus {
+    border-color: #16a34a !important;
+    box-shadow: 0 0 0 1px rgba(22, 163, 74, 0.35) !important;
+    background: #ffffff !important;
+}
+
 .stButton > button {
-    background: #1a1a2e !important; color: #fff !important; border: none !important;
-    border-radius: 8px !important; font-family: 'IBM Plex Mono', monospace !important;
-    font-size: 0.8rem !important; padding: 0.55rem 1.5rem !important;
+    background: #15803d !important;
+    color: #f9fafb !important;
+    border: none !important;
+    border-radius: 999px !important;
+    font-family: 'IBM Plex Mono', monospace !important;
+    font-size: 0.8rem !important;
+    padding: 0.55rem 1.5rem !important;
 }
-.stButton > button:hover { background: #16213e !important; }
+
+.stButton > button:hover {
+    background: #166534 !important;
+}
+
 .stDownloadButton > button {
-    background: #059669 !important; color: #fff !important; border: none !important;
-    border-radius: 8px !important; font-family: 'IBM Plex Mono', monospace !important;
-    font-size: 0.85rem !important; padding: 0.6rem 1.5rem !important; width: 100%;
+    background: #15803d !important;
+    color: #f9fafb !important;
+    border: none !important;
+    border-radius: 10px !important;
+    font-family: 'IBM Plex Mono', monospace !important;
+    font-size: 0.85rem !important;
+    padding: 0.6rem 1.5rem !important;
+    width: 100%;
 }
+
 .status-badge {
-    display: inline-block; background: #eff6ff; color: #3b82f6;
-    font-family: 'IBM Plex Mono', monospace; font-size: 0.7rem;
-    padding: 0.15rem 0.5rem; border-radius: 4px; margin-bottom: 0.4rem;
+    display: inline-block;
+    background: #ecfdf3;
+    color: #15803d;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    margin-bottom: 0.4rem;
 }
+
 .specialist-badge {
-    display: inline-block; background: #d1fae5; color: #065f46;
-    font-family: 'IBM Plex Mono', monospace; font-size: 0.7rem;
-    padding: 0.15rem 0.5rem; border-radius: 4px; margin-bottom: 1rem; margin-left: 0.5rem;
+    display: inline-block;
+    background: #bbf7d0;
+    color: #14532d;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    margin-bottom: 1rem;
+    margin-left: 0.5rem;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -396,11 +459,17 @@ with chat_container:
 
 # ── Input ──────────────────────────────────────────────────────────────────────
 if st.session_state.stage != "done":
-    col1, col2 = st.columns([5, 1])
-    with col1:
-        user_input = st.text_input("", placeholder="Type your message...", label_visibility="collapsed", key="user_input")
-    with col2:
-        send = st.button("Send →")
+    with st.form("chat_form", clear_on_submit=True):
+        col1, col2 = st.columns([5, 1])
+        with col1:
+            user_input = st.text_input(
+                "",
+                placeholder="Type your message...",
+                label_visibility="collapsed",
+                key="user_input",
+            )
+        with col2:
+            send = st.form_submit_button("Send →")
 
     if send and user_input.strip() and st.session_state.api_key:
         st.session_state.messages.append({"role": "user", "content": user_input})
