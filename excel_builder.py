@@ -334,21 +334,30 @@ def _assumptions(wb, data) -> dict:
                f"=B{r_rlong}/1000000",
                "#,##0.000", "Scale by replacement_cost when data available. Year 1 only.", row); row += 2
 
-        # Total cross-check row
+        # Total row — styled as a key output, feeds Inputs Annual Benefit via formula
         total_formula = "+".join(f"B{r}" for r in SUB_ROWS.values())
-        _cell(ws, row, 1, "TOTAL Annual Sub-Benefits (cross-check)", bold=True, bg=C_LIGHT)
-        c = ws.cell(row=row, column=2, value=f"={total_formula}")
-        c.font = Font(name="Arial", bold=True, color=C_GREEN, size=10)
-        c.fill = PatternFill("solid", fgColor=C_LIGHT)
-        c.number_format = "#,##0.000"; c.border = _bd()
-        c.alignment = Alignment(horizontal="right")
-        _cell(ws, row, 3, "Sum of all ► final rows. Should approximate annual_benefit in Inputs.", color="94A3B8")
+        TOTAL_ROW = row
+        c1 = ws.cell(row=row, column=1, value="► TOTAL ANNUAL BENEFIT  (sum of all components → drives Inputs & NPV)")
+        c1.font = Font(name="Arial", bold=True, size=11, color=C_GREEN)
+        c1.fill = PatternFill("solid", fgColor="F0FDF4"); c1.border = _bd()
+        c2 = ws.cell(row=row, column=2, value=f"={total_formula}")
+        c2.font = Font(name="Arial", bold=True, size=11, color=C_GREEN)
+        c2.fill = PatternFill("solid", fgColor="F0FDF4")
+        c2.number_format = "#,##0.000"; c2.border = _bd()
+        c2.alignment = Alignment(horizontal="right")
+        c3 = ws.cell(row=row, column=3,
+                     value="NIS M/yr — referenced by Inputs!Annual_Benefit cell; change any parameter above to update NPV/BCR")
+        c3.font = Font(name="Arial", size=8, color="94A3B8", italic=True)
+        c3.fill = PatternFill("solid", fgColor="F0FDF4"); c3.border = _bd()
+        ws.row_dimensions[row].height = 20
         row += 1
 
         _auto_widths(ws)
 
         # Build am dict with full absolute refs
         am = {
+            "sub_total":       f"ASSUMPTIONS!$B${TOTAL_ROW}",   # total annual benefit — drives Inputs
+            "sub_total_row":   TOTAL_ROW,
             "vsl_base":        f"ASSUMPTIONS!$B${VSL_BASE_ROW}",
             "cpi_mult":        f"ASSUMPTIONS!$B${CPI_ROW}",
             "ppp_ratio":       f"ASSUMPTIONS!$B${PPP_ROW}",
@@ -477,6 +486,62 @@ def _calculations(wb, data, rm, am=None):
         ws.row_dimensions[row].height = 15
         row += 1
     row += 1
+
+    # ── Section 1B: Benefit Components → Total Annual Benefit (specialist only) ─
+    COMPONENT_LABELS = [
+        ("sub_avoided_mortality",      "Avoided Mortality",          "annual recurring  |  see ASSUMPTIONS → AVOIDED MORTALITY block"),
+        ("sub_morbidity_savings",      "+ Morbidity Savings",        "annual recurring  |  see ASSUMPTIONS → MORBIDITY SAVINGS block"),
+        ("sub_skin_cancer_prevention", "+ Skin Cancer Prevention",   "annual recurring  |  natural shading only"),
+        ("sub_carbon_sequestration",   "+ Carbon Sequestration",     "annual recurring  |  see ASSUMPTIONS → CARBON block"),
+        ("sub_runoff_reduction",       "+ Runoff Reduction",         "annual recurring  |  see ASSUMPTIONS → RUNOFF block"),
+        ("sub_air_quality",            "+ Air Quality",              "annual recurring  |  see ASSUMPTIONS → AIR QUALITY block"),
+        ("sub_habitat_creation",       "+ Habitat Creation",         "annual recurring  |  see ASSUMPTIONS → HABITAT block"),
+        ("sub_property_value_uplift",  "+ Property Value Uplift",    "Year-1 lump sum  |  green roof only"),
+        ("sub_roof_longevity",         "+ Roof Longevity Extension", "Year-1 lump sum  |  green roof only"),
+    ]
+    if am and am.get("sub_total"):
+        _sec(ws, row, 1,
+             "BENEFIT COMPONENTS  →  TOTAL ANNUAL BENEFIT  "
+             "(this total drives the Annual Benefit in Inputs and therefore NPV & BCR)",
+             span=3); row += 1
+
+        expl = ("Each component below was derived from methodology parameters in the ASSUMPTIONS sheet using "
+                "step-by-step labeled calculations. Their sum is the Total Annual Benefit — the single number "
+                "that enters the NPV annuity formula. Change any parameter in ASSUMPTIONS to update everything.")
+        c = ws.cell(row=row, column=1, value=expl)
+        c.font = Font(name="Arial", size=9, color="475569", italic=True)
+        c.alignment = Alignment(wrap_text=True, vertical="top")
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=3)
+        ws.row_dimensions[row].height = 36
+        row += 1
+
+        _hdr(ws, row, 1, "Benefit Component", bg=C_ACCENT, sz=10)
+        _hdr(ws, row, 2, f"Annual Value ({cur} M)", bg=C_ACCENT, sz=10)
+        _hdr(ws, row, 3, "Type & Source", bg=C_ACCENT, sz=10)
+        row += 1
+
+        for key, label, btype in COMPONENT_LABELS:
+            ref = am.get(key)
+            if not ref:
+                continue
+            _step(label, f"={ref}", btype, row, is_ref=True)
+            row += 1
+
+        _final("► TOTAL ANNUAL BENEFIT",
+               f"={am['sub_total']}", "#,##0.000",
+               "= sum of all components above  →  referenced by Inputs Annual Benefit cell", row); row += 1
+
+        # Arrow row showing it flows to Inputs
+        c = ws.cell(row=row, column=1,
+                    value=f"  \u2193  This total is referenced by the Inputs sheet 'Annual Benefit' cell (green cell below):")
+        c.font = Font(name="Arial", size=9, color=C_ACCENT, bold=True, italic=True)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=3)
+        row += 1
+        _step("Inputs 'Annual Benefit'  (all measures)",
+              f"=Inputs!{get_column_letter(2)}${rm['benefit']}",
+              "green = formula-linked from ASSUMPTIONS total — change parameters above to update",
+              row, is_ref=True)
+        row += 2
 
     # ── Section 2: Per-measure NPV/BCR traces ─────────────────────────────────
     _sec(ws, row, 1, "NPV & BCR CALCULATION TRACE — ONE BLOCK PER MEASURE", span=3); row += 1
@@ -650,7 +715,7 @@ def build_excel(data: dict, path: str, assumptions_override: dict = None):
     # _assumptions inserts at index 0, pushing the default "Sheet" to index 1.
     # Reset active so _inputs renames the original default sheet to "Inputs".
     wb.active = wb.worksheets[1]
-    rm = _inputs(wb, data)
+    rm = _inputs(wb, data, am)
     _results(wb, data, rm)
     _sensitivity(wb, data, rm)       # must run before _calculations to populate sens_param_rows
     _calculations(wb, data, rm, am)  # full audit trail: NPV/BCR + sensitivity traces
@@ -664,7 +729,7 @@ def build_excel(data: dict, path: str, assumptions_override: dict = None):
 
 
 # ── SHEET 1: INPUTS ────────────────────────────────────────────────────────────
-def _inputs(wb, data):
+def _inputs(wb, data, am=None):
     ws = wb.active
     ws.title = "Inputs"
     ws.sheet_view.showGridLines = False
@@ -732,13 +797,26 @@ def _inputs(wb, data):
 
     BENEFIT_ROW = row
     _cell(ws, row, 1, "Annual Benefit", bold=True)
-    for ci, m in enumerate(measures, 2):
-        c = ws.cell(row=row, column=ci, value=m["annual_benefit"])
-        c.font = Font(name="Arial", bold=True, color=BLUE, size=10)
-        c.number_format = "#,##0.0"; c.border = _bd()
-        c.fill = PatternFill("solid", fgColor=C_LIGHT)
-        c.alignment = Alignment(horizontal="right")
-    _cell(ws, row, n+2, "Annual monetised benefit"); row += 1
+    sub_total_ref = am.get("sub_total") if am else None
+    if sub_total_ref:
+        # Specialist mode: formula-linked from ASSUMPTIONS total — green (not editable here)
+        for ci, m in enumerate(measures, 2):
+            c = ws.cell(row=row, column=ci, value=f"={sub_total_ref}")
+            c.font = Font(name="Arial", bold=True, color=GREEN_LK, size=10)
+            c.number_format = "#,##0.0"; c.border = _bd()
+            c.fill = PatternFill("solid", fgColor=C_LIGHT)
+            c.alignment = Alignment(horizontal="right")
+        _cell(ws, row, n+2, "← derived from ASSUMPTIONS benefit components (see CALCULATIONS sheet for breakdown)")
+    else:
+        # Non-specialist: blue editable
+        for ci, m in enumerate(measures, 2):
+            c = ws.cell(row=row, column=ci, value=m["annual_benefit"])
+            c.font = Font(name="Arial", bold=True, color=BLUE, size=10)
+            c.number_format = "#,##0.0"; c.border = _bd()
+            c.fill = PatternFill("solid", fgColor=C_LIGHT)
+            c.alignment = Alignment(horizontal="right")
+        _cell(ws, row, n+2, "Annual monetised benefit")
+    row += 1
 
     LIFE_ROW = row
     _cell(ws, row, 1, "Measure Lifetime (years)", bold=True)
