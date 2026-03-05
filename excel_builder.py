@@ -51,7 +51,7 @@ def _widths(ws, d):
     for col, w in d.items():
         ws.column_dimensions[get_column_letter(col)].width = w
 
-def _auto_widths(ws, min_w=10, max_w=55):
+def _auto_widths(ws, min_w=10, max_w=75):
     """Auto-fit column widths based on cell content length."""
     if not ws.max_row or not ws.max_column:
         return
@@ -817,6 +817,63 @@ def _inputs(wb, data, am=None):
             c.alignment = Alignment(horizontal="right")
         _cell(ws, row, n+2, "Annual monetised benefit")
     row += 1
+
+    # Benefit component expansion — specialist only, inserted between Annual Benefit and Lifetime
+    if am and am.get("sub_total"):
+        COMP_LABELS = [
+            ("sub_avoided_mortality",      "  \u2937 Avoided Mortality",            "NIS M/yr  |  step-by-step in ASSUMPTIONS"),
+            ("sub_morbidity_savings",      "  \u2937 + Morbidity Savings",          "NIS M/yr  |  step-by-step in ASSUMPTIONS"),
+            ("sub_skin_cancer_prevention", "  \u2937 + Skin Cancer Prevention",     "NIS M/yr  |  natural shading"),
+            ("sub_carbon_sequestration",   "  \u2937 + Carbon Sequestration",       "NIS M/yr"),
+            ("sub_runoff_reduction",       "  \u2937 + Runoff Reduction",           "NIS M/yr"),
+            ("sub_air_quality",            "  \u2937 + Air Quality",                "NIS M/yr"),
+            ("sub_habitat_creation",       "  \u2937 + Habitat Creation",           "NIS M/yr"),
+            ("sub_property_value_uplift",  "  \u2937 + Property Value Uplift",      "Year-1 lump sum  |  green roof"),
+            ("sub_roof_longevity",         "  \u2937 + Roof Longevity Extension",   "Year-1 lump sum  |  green roof"),
+        ]
+        # Section header bar
+        c = ws.cell(row=row, column=1,
+                    value="ANNUAL BENEFIT COMPONENTS  —  each value is an Excel formula linked from ASSUMPTIONS sheet")
+        c.font = Font(name="Arial", bold=True, color=C_WHITE, size=8)
+        c.fill = PatternFill("solid", fgColor=C_MID)
+        c.alignment = Alignment(horizontal="left", vertical="center")
+        c.border = _bd()
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n+2)
+        ws.row_dimensions[row].height = 14
+        row += 1
+        # Component rows
+        for key, label, btype in COMP_LABELS:
+            ref = am.get(key)
+            if not ref:
+                continue
+            c1 = ws.cell(row=row, column=1, value=label)
+            c1.font = Font(name="Arial", size=8, color="64748B", italic=True)
+            c1.border = _bd()
+            for ci_m in range(2, n+2):
+                c2 = ws.cell(row=row, column=ci_m, value=f"={ref}")
+                c2.font = Font(name="Arial", size=8, color=GREEN_LK)
+                c2.number_format = "#,##0.000"; c2.border = _bd()
+                c2.alignment = Alignment(horizontal="right")
+            c3 = ws.cell(row=row, column=n+2, value=btype)
+            c3.font = Font(name="Arial", size=8, color="94A3B8", italic=True)
+            c3.border = _bd()
+            ws.row_dimensions[row].height = 13
+            row += 1
+        # Total row
+        c1 = ws.cell(row=row, column=1, value="  \u25ba TOTAL ANNUAL BENEFIT")
+        c1.font = Font(name="Arial", bold=True, size=9, color=C_GREEN)
+        c1.fill = PatternFill("solid", fgColor="F0FDF4"); c1.border = _bd()
+        for ci_m in range(2, n+2):
+            c2 = ws.cell(row=row, column=ci_m, value=f"={am['sub_total']}")
+            c2.font = Font(name="Arial", bold=True, size=9, color=C_GREEN)
+            c2.number_format = "#,##0.000"
+            c2.fill = PatternFill("solid", fgColor="F0FDF4"); c2.border = _bd()
+            c2.alignment = Alignment(horizontal="right")
+        c3 = ws.cell(row=row, column=n+2, value="= Annual Benefit row above")
+        c3.font = Font(name="Arial", size=8, color="94A3B8", italic=True)
+        c3.fill = PatternFill("solid", fgColor="F0FDF4"); c3.border = _bd()
+        ws.row_dimensions[row].height = 14
+        row += 2  # blank gap before Lifetime row
 
     LIFE_ROW = row
     _cell(ws, row, 1, "Measure Lifetime (years)", bold=True)
