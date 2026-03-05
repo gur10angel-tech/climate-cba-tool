@@ -71,7 +71,8 @@ def build_excel(data: dict, path: str):
     _results(wb, data, rm)
     _sensitivity(wb, data, rm)
     _summary(wb, data, rm)
-    _benefit_detail(wb, data, rm)
+    if any(m.get("benefit_types") for m in data.get("measures", [])):
+        _benefit_detail(wb, data, rm)
     if data.get("specialist_type") in ("natural_shading", "green_roof"):
         _specialist_detail(wb, data, rm)
         _benefit_breakdown(wb, data, rm)
@@ -831,6 +832,7 @@ def _specialist_detail(wb, data, rm):
         # Column headers (Year | Maturity | Base Benefit | Effective | Disc Factor | PV | benefit cols...)
         TABLE_HDRS = ["Year", "Maturity\nFactor", f"Base Benefit\n({cur}M/yr)",
                       f"Eff. Benefit\n({cur}M/yr)", "Disc.\nFactor", f"PV of Benefit\n({cur}M)"]
+        for ci, h in enumerate(TABLE_HDRS, 1):
             _hdr(ws, row, ci, h, bg=C_ACCENT, sz=9, wrap=True)
         ws.row_dimensions[row].height = 30
         HDR_ROW = row; row += 1
