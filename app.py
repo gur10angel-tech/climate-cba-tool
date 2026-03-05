@@ -527,7 +527,11 @@ st.markdown("## 🌍 Climate Adaptation CBA Tool")
 # API key
 with st.expander("⚙️ API Key", expanded=not st.session_state.api_key):
     k = st.text_input("Anthropic API Key", type="password", value=st.session_state.api_key)
-    if k: st.session_state.api_key = k
+    if k:
+        sanitized = k.strip().encode("ascii", errors="ignore").decode("ascii")
+        if sanitized != k.strip():
+            st.warning("\u26a0\ufe0f Non-ASCII characters were removed from your API key. Please re-check it.")
+        st.session_state.api_key = sanitized
 
 st.markdown("---")
 
@@ -574,7 +578,8 @@ if st.session_state.stage != "done":
 
     if send and user_input.strip() and st.session_state.api_key:
         st.session_state.messages.append({"role": "user", "content": user_input})
-        client = anthropic.Anthropic(api_key=st.session_state.api_key)
+        _key = st.session_state.api_key.strip().encode("ascii", errors="ignore").decode("ascii")
+        client = anthropic.Anthropic(api_key=_key)
 
         # ── Stage: problem description ─────────────────────────────────────────
         if st.session_state.stage == "problem":
