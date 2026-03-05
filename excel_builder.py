@@ -69,8 +69,253 @@ def _auto_widths(ws, min_w=10, max_w=55):
             continue
 
 
-def build_excel(data: dict, path: str):
+# ── SHEET 0: ASSUMPTIONS ───────────────────────────────────────────────────────
+def _assumptions(wb, data) -> dict:
+    """Create ASSUMPTIONS sheet with VSL chain, CDD/specialist params, unit costs,
+    and derived annual sub-benefit formulas. Returns am dict of cell references."""
+    ws = wb.create_sheet("ASSUMPTIONS", 0)  # Insert as first sheet
+    ws.sheet_view.showGridLines = False
+    ws.tab_color = "059669"  # green tab to distinguish from output sheets
+
+    stype   = data.get("specialist_type")
+    vsl     = data.get("vsl_params", {})
+    cdd     = data.get("cdd_params", {})
+    sp      = data.get("specialist_params", {})
+    cur     = data.get("currency", "NIS")
+
+    _hdr(ws, 1, 1, "METHODOLOGY ASSUMPTIONS — EDITABLE PARAMETERS", sz=13, span=4)
+    _hdr(ws, 2, 1,
+         "Blue = editable input  |  Black = computed formula (do not overwrite)  |  "
+         "Change any blue cell to update all linked NPVs and BCRs across the workbook.",
+         bg=C_MID, fg="CBD5E1", bold=False, sz=9, span=4)
+
+    row = 4
+
+    # ── Section 1: VSL PARAMETERS (8-Step Chain) ───────────────────────────────
+    if stype in ("natural_shading", "green_roof") and vsl:
+        _sec(ws, row, 1, "VSL PARAMETERS — 8-STEP DERIVATION CHAIN", span=3); row += 1
+        _hdr(ws, row, 1, "Parameter", bg=C_ACCENT, sz=10)
+        _hdr(ws, row, 2, "Value", bg=C_ACCENT, sz=10)
+        _hdr(ws, row, 3, "Notes", bg=C_ACCENT, sz=10)
+        row += 1
+
+        def _inp_row(label, val, fmt, note, row_num):
+            _cell(ws, row_num, 1, label, bold=True)
+            c = ws.cell(row=row_num, column=2, value=val)
+            c.font = Font(name="Arial", bold=True, color=BLUE, size=10)
+            c.fill = PatternFill("solid", fgColor=C_LIGHT)
+            c.number_format = fmt; c.border = _bd()
+            c.alignment = Alignment(horizontal="right")
+            _cell(ws, row_num, 3, note, color="94A3B8")
+
+        def _frm_row(label, formula, fmt, note, row_num, highlight=False):
+            _cell(ws, row_num, 1, label, bold=highlight)
+            c = ws.cell(row=row_num, column=2, value=formula)
+            c.font = Font(name="Arial", bold=highlight, color=C_GREEN if highlight else BLACK, size=10)
+            if highlight:
+                c.fill = PatternFill("solid", fgColor="F0FDF4")
+            c.number_format = fmt; c.border = _bd()
+            c.alignment = Alignment(horizontal="right")
+            _cell(ws, row_num, 3, note, color="94A3B8")
+
+        _inp_row("Base VSL (2005 USD)",             vsl.get("base_vsl_usd_2005", 3_000_000), "#,##0",  "OECD meta-study baseline", row); VSL_BASE_ROW = row; row += 1
+        _inp_row("CPI Multiplier (2005→2024)",       vsl.get("cpi_multiplier", 1.68),          "0.000",  "US Bureau of Labor Statistics", row); CPI_ROW = row; row += 1
+        _inp_row("GDP PPP Ratio (Israel / OECD)",    vsl.get("gdp_ppp_ratio", 0.89),           "0.000",  "World Bank WDI", row); PPP_ROW = row; row += 1
+        _inp_row("Income Elasticity",                vsl.get("income_elasticity", 1.0),         "0.0",    "Standard for developed economies", row); INCOME_EL_ROW = row; row += 1
+        _inp_row(f"FX Rate ({cur} / USD)",           vsl.get("usd_to_local_currency", 3.7),     "0.00",   "", row); FX_ROW = row; row += 1
+        _inp_row("Life Expectancy Remaining (yrs)",  vsl.get("life_expectancy_remaining", 35),  "0",      "Affected demographic", row); LIFE_EXP_ROW = row; row += 1
+
+        row += 1  # blank separator before computed rows
+        _frm_row("Step 1→2: CPI-Adjusted VSL (USD)",        f"=B{VSL_BASE_ROW}*B{CPI_ROW}",               "#,##0",  "", row); CPI_ADJ_ROW = row; row += 1
+        _frm_row("Step 3→5: PPP & Elasticity Adj. (USD)",   f"=B{CPI_ADJ_ROW}*B{PPP_ROW}*B{INCOME_EL_ROW}", "#,##0", "", row); PPP_ADJ_ROW = row; row += 1
+        _frm_row(f"Step 6→7: VSL in {cur}",                 f"=B{PPP_ADJ_ROW}*B{FX_ROW}",                 "#,##0",  "Key output — used in all mortality/morbidity benefit formulas", row, highlight=True); VSL_LOCAL_ROW = row; row += 1
+        _frm_row(f"Step 8: VSLY in {cur}",                  f"=B{VSL_LOCAL_ROW}/B{LIFE_EXP_ROW}",         "#,##0",  "Value per Statistical Life Year", row, highlight=True); VSLY_LOCAL_ROW = row; row += 2
+
+        # ── Section 2: CDD PARAMETERS ─────────────────────────────────────────
+        _sec(ws, row, 1, "CDD PARAMETERS", span=3); row += 1
+        _hdr(ws, row, 1, "Parameter", bg=C_ACCENT, sz=10)
+        _hdr(ws, row, 2, "Value", bg=C_ACCENT, sz=10)
+        _hdr(ws, row, 3, "Notes", bg=C_ACCENT, sz=10)
+        row += 1
+
+        _inp_row("Annual Cooling Degree Days (CDD)",          cdd.get("annual_cdd", 735),                    "#,##0",   "Tel Aviv baseline (21°C base)", row); ANNUAL_CDD_ROW = row; row += 1
+        _inp_row("Base Temperature (°C)",                     cdd.get("base_temp_celsius", 21),              "0",       "Threshold for heat health risk", row); row += 1
+        _inp_row("Heat-Mortality Factor (deaths/person/CDD)", cdd.get("heat_mortality_factor", 0.00083),     "0.00000", "Gasparrini et al. (2017)", row); HEAT_MORT_ROW = row; row += 1
+        _inp_row("Base Mortality Rate (annual)",              0.01,                                          "0.000",   "Deaths per person per year in at-risk population (default 1%)", row); BASE_MORT_ROW = row; row += 1
+        _inp_row("Population at Risk / Pedestrians per Hour", cdd.get("population_density_or_pedestrians", 1000), "#,##0", "Project-specific population driver", row); POP_ROW = row; row += 2
+
+        # ── Section 3: SPECIALIST PARAMETERS ──────────────────────────────────
+        _sec(ws, row, 1, "SPECIALIST PARAMETERS", span=3); row += 1
+        _hdr(ws, row, 1, "Parameter", bg=C_ACCENT, sz=10)
+        _hdr(ws, row, 2, "Value", bg=C_ACCENT, sz=10)
+        _hdr(ws, row, 3, "Notes", bg=C_ACCENT, sz=10)
+        row += 1
+
+        _inp_row("Heat Reduction Efficiency",        sp.get("heat_reduction_efficiency", 0.5 if stype == "natural_shading" else 0.28), "0.00%", "Fraction of heat exposure avoided", row); HEAT_EFF_ROW = row; row += 1
+        _inp_row("UV Reduction Factor",              sp.get("uv_reduction_factor", 0.75),       "0.00%", "Natural shading UV attenuation", row); UV_RED_ROW = row; row += 1
+        _inp_row("Operating Hours per Day",          8,                                          "0",     "Hours of active shade/benefit per day", row); OP_HOURS_ROW = row; row += 1
+        _inp_row("Maturity Years (natural shading)", sp.get("maturity_years", 8),               "0",     "Linear ramp years 1→maturity_years, then 100%", row); MAT_YEARS_ROW = row; row += 1
+        _inp_row("Skin Cancer Incidence Rate",       0.0005,                                     "0.000000", "Annual skin cancer cases per exposed person", row); SKINCANCER_ROW = row; row += 1
+        _inp_row("Morbidity-to-Mortality Multiplier", 10,                                        "0",     "Morbidity cases per statistical death (default 10×)", row); MORB_MULT_ROW = row; row += 2
+
+        # ── Section 4: UNIT COSTS & RATES ─────────────────────────────────────
+        _sec(ws, row, 1, "UNIT COSTS & RATES", span=3); row += 1
+        _hdr(ws, row, 1, "Parameter", bg=C_ACCENT, sz=10)
+        _hdr(ws, row, 2, "Value", bg=C_ACCENT, sz=10)
+        _hdr(ws, row, 3, "Notes", bg=C_ACCENT, sz=10)
+        row += 1
+
+        carbon_default = 450 if stype == "natural_shading" else 350
+        _inp_row(f"Hospitalization Cost per Day ({cur})",  3928,          "#,##0",   "Israeli Health Ministry (2024)", row); HOSP_COST_ROW = row; row += 1
+        _inp_row("Average Length of Stay (days)",           5.2,           "0.0",     "Clinical literature", row); AVG_LOS_ROW = row; row += 1
+        _inp_row(f"Carbon Value ({cur}/unit/yr)",           carbon_default,"#,##0",   "NIS/tree/yr (shading) or NIS/m²/yr (green roof)", row); CARBON_ROW = row; row += 1
+        _inp_row("Tree Density / Functional Unit Area",     1.0,           "0.0",     "Trees per lin m (shading) or m² per m² (green roof)", row); TREE_DENS_ROW = row; row += 1
+        _inp_row(f"Habitat Value ({cur}/m²/yr)",            300,           "#,##0",   "TEEB (2010); Israeli urban ecology studies", row); HABITAT_ROW = row; row += 1
+        _inp_row("Property Value Uplift %",                 sp.get("property_value_uplift_pct", 0.03), "0.00%", "Green roof hedonic uplift (Fuerst & McAllister 2011)", row); PROP_UPLIFT_ROW = row; row += 1
+        _inp_row("Roof Longevity Extension (yrs)",          sp.get("roof_longevity_extension_years", 15), "0", "Membrane life extension vs conventional roof", row); ROOF_LONG_ROW = row; row += 1
+        _inp_row(f"PM2.5 Health Cost per Unit ({cur})",     1000,          "#,##0",   "Placeholder — WHO Air Quality Guidelines (2021)", row); PM25_ROW = row; row += 1
+        _inp_row(f"Runoff Cost Avoided per Unit ({cur})",   100,           "#,##0",   "Placeholder — local infrastructure cost", row); RUNOFF_COST_ROW = row; row += 1
+        _inp_row("Runoff Reduction Coefficient",            0.65,          "0.00",    "EPA Stormwater BMP Guide", row); RUNOFF_COEFF_ROW = row; row += 2
+
+        # ── Section 5: DERIVED ANNUAL SUB-BENEFITS ────────────────────────────
+        _sec(ws, row, 1,
+             f"DERIVED ANNUAL SUB-BENEFITS  [{cur} millions / functional unit / base year]  "
+             "— formulas update when any input above changes",
+             span=3); row += 1
+        _hdr(ws, row, 1, "Benefit Category", bg=C_ACCENT, sz=10)
+        _hdr(ws, row, 2, "Annual Value (formula)", bg=C_ACCENT, sz=10)
+        _hdr(ws, row, 3, "Formula logic", bg=C_ACCENT, sz=10)
+        row += 1
+
+        SUB_ROWS = {}
+
+        def _sub_row(key, label, formula, logic, row_num):
+            _cell(ws, row_num, 1, label, bold=False, bg="F0FDF4")
+            c = ws.cell(row=row_num, column=2, value=formula)
+            c.font = Font(name="Arial", color=BLACK, size=10)
+            c.fill = PatternFill("solid", fgColor="F0FDF4")
+            c.number_format = "#,##0.000"; c.border = _bd()
+            c.alignment = Alignment(horizontal="right")
+            _cell(ws, row_num, 3, logic, color="475569")
+            SUB_ROWS[key] = row_num
+
+        _sub_row("avoided_mortality_npv",
+                 "Avoided Mortality",
+                 f"=B{POP_ROW}*B{BASE_MORT_ROW}*B{HEAT_MORT_ROW}*B{HEAT_EFF_ROW}*B{VSL_LOCAL_ROW}/1000000",
+                 "pop × base_mort × heat_mort_factor × heat_eff × VSL / 1M",
+                 row); row += 1
+
+        _sub_row("morbidity_savings_npv",
+                 "Morbidity Savings",
+                 f"=B{POP_ROW}*B{BASE_MORT_ROW}*B{MORB_MULT_ROW}*B{HEAT_MORT_ROW}*B{HEAT_EFF_ROW}*B{HOSP_COST_ROW}*B{AVG_LOS_ROW}/1000000",
+                 "pop × base_mort × morb_mult × heat_mort × heat_eff × hosp_cost × LOS / 1M",
+                 row); row += 1
+
+        _sub_row("skin_cancer_prevention_npv",
+                 "Skin Cancer Prevention",
+                 f"=B{POP_ROW}*B{OP_HOURS_ROW}*B{UV_RED_ROW}*B{SKINCANCER_ROW}*(B{HOSP_COST_ROW}*B{AVG_LOS_ROW}+B{VSLY_LOCAL_ROW})/1000000",
+                 "pop × op_hrs × UV_red × incidence × (hosp_cost×LOS + VSLY) / 1M",
+                 row); row += 1
+
+        _sub_row("carbon_sequestration_npv",
+                 "Carbon Sequestration",
+                 f"=B{CARBON_ROW}*B{TREE_DENS_ROW}/1000000",
+                 "carbon_value × tree_density / 1M",
+                 row); row += 1
+
+        _sub_row("runoff_reduction_npv",
+                 "Runoff Reduction",
+                 f"=B{RUNOFF_COST_ROW}*B{RUNOFF_COEFF_ROW}/1000000",
+                 "runoff_cost × runoff_coefficient / 1M",
+                 row); row += 1
+
+        _sub_row("air_quality_npv",
+                 "Air Quality",
+                 f"=B{PM25_ROW}/1000000",
+                 "pm25_health_cost / 1M  (placeholder — scale by area/trees when data available)",
+                 row); row += 1
+
+        _sub_row("habitat_creation_npv",
+                 "Habitat Creation",
+                 f"=B{HABITAT_ROW}*B{TREE_DENS_ROW}/1000000",
+                 "habitat_value × functional_unit_area / 1M",
+                 row); row += 1
+
+        _sub_row("property_value_uplift_npv",
+                 "Property Value Uplift (Year 1 only)",
+                 f"=B{PROP_UPLIFT_ROW}/1000000",
+                 "uplift_pct / 1M  (scale by roof_area × property_value when data available)",
+                 row); row += 1
+
+        _sub_row("roof_longevity_npv",
+                 "Roof Longevity Extension (lump sum)",
+                 f"=B{ROOF_LONG_ROW}/1000000",
+                 "longevity_years / 1M  (scale by replacement_cost when data available)",
+                 row); row += 1
+
+        # Total cross-check row
+        first_sub = min(SUB_ROWS.values())
+        last_sub  = max(SUB_ROWS.values())
+        _cell(ws, row, 1, "TOTAL Annual Sub-Benefits (cross-check)", bold=True, bg=C_LIGHT)
+        c = ws.cell(row=row, column=2, value=f"=SUM(B{first_sub}:B{last_sub})")
+        c.font = Font(name="Arial", bold=True, color=C_GREEN, size=10)
+        c.fill = PatternFill("solid", fgColor=C_LIGHT)
+        c.number_format = "#,##0.000"; c.border = _bd()
+        c.alignment = Alignment(horizontal="right")
+        _cell(ws, row, 3, "Should approximate annual_benefit in Inputs. Differences reflect model calibration.", color="94A3B8")
+        row += 1
+
+        _auto_widths(ws)
+
+        # Build am dict with full absolute refs
+        am = {
+            "vsl_base":        f"ASSUMPTIONS!$B${VSL_BASE_ROW}",
+            "cpi_mult":        f"ASSUMPTIONS!$B${CPI_ROW}",
+            "ppp_ratio":       f"ASSUMPTIONS!$B${PPP_ROW}",
+            "income_el":       f"ASSUMPTIONS!$B${INCOME_EL_ROW}",
+            "fx_rate":         f"ASSUMPTIONS!$B${FX_ROW}",
+            "life_exp":        f"ASSUMPTIONS!$B${LIFE_EXP_ROW}",
+            "vsl_cpi_adj":     f"ASSUMPTIONS!$B${CPI_ADJ_ROW}",
+            "vsl_ppp_adj":     f"ASSUMPTIONS!$B${PPP_ADJ_ROW}",
+            "vsl_local":       f"ASSUMPTIONS!$B${VSL_LOCAL_ROW}",
+            "vsly_local":      f"ASSUMPTIONS!$B${VSLY_LOCAL_ROW}",
+        }
+        for key, r in SUB_ROWS.items():
+            short = key.replace("_npv", "")
+            am[f"sub_{short}"] = f"ASSUMPTIONS!$B${r}"
+        # Aliases for lookup convenience
+        am["sub_avoided_mortality"]      = am.get("sub_avoided_mortality_npv",      am.get("sub_avoided_mortality"))
+        am["sub_morbidity_savings"]      = am.get("sub_morbidity_savings_npv",      am.get("sub_morbidity_savings"))
+        am["sub_skin_cancer_prevention"] = am.get("sub_skin_cancer_prevention_npv", am.get("sub_skin_cancer_prevention"))
+        am["sub_carbon_sequestration"]   = am.get("sub_carbon_sequestration_npv",   am.get("sub_carbon_sequestration"))
+        am["sub_runoff_reduction"]       = am.get("sub_runoff_reduction_npv",       am.get("sub_runoff_reduction"))
+        am["sub_air_quality"]            = am.get("sub_air_quality_npv",            am.get("sub_air_quality"))
+        am["sub_habitat_creation"]       = am.get("sub_habitat_creation_npv",       am.get("sub_habitat_creation"))
+        am["sub_property_value_uplift"]  = am.get("sub_property_value_uplift_npv",  am.get("sub_property_value_uplift"))
+        am["sub_roof_longevity"]         = am.get("sub_roof_longevity_npv",         am.get("sub_roof_longevity"))
+        return am
+
+    else:
+        # Non-specialist: minimal ASSUMPTIONS sheet with just a cross-reference note
+        _sec(ws, row, 1, "GLOBAL PARAMETER CROSS-REFERENCE", span=3); row += 1
+        c = ws.cell(row=row, column=1, value="Discount Rate and Time Horizon are set in the Inputs sheet (blue cells). No specialist VSL/CDD methodology active for this analysis.")
+        c.font = Font(name="Arial", size=10, color="475569")
+        c.alignment = Alignment(wrap_text=True)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=3)
+        _auto_widths(ws)
+        return {}
+
+
+def build_excel(data: dict, path: str, assumptions_override: dict = None):
+    if assumptions_override:
+        for section in ("vsl_params", "cdd_params", "specialist_params"):
+            if section in assumptions_override:
+                data.setdefault(section, {}).update(assumptions_override[section])
     wb = Workbook()
+    am = _assumptions(wb, data)
+    # _assumptions inserts at index 0, pushing the default "Sheet" to index 1.
+    # Reset active so _inputs renames the original default sheet to "Inputs".
+    wb.active = wb.worksheets[1]
     rm = _inputs(wb, data)
     _results(wb, data, rm)
     _sensitivity(wb, data, rm)
@@ -78,7 +323,7 @@ def build_excel(data: dict, path: str):
     if any(m.get("benefit_types") for m in data.get("measures", [])):
         _benefit_detail(wb, data, rm)
     if data.get("specialist_type") in ("natural_shading", "green_roof"):
-        _specialist_detail(wb, data, rm)
+        _specialist_detail(wb, data, rm, am)
         _benefit_breakdown(wb, data, rm)
     wb.save(path)
 
@@ -634,7 +879,9 @@ def _summary(wb, data, rm):
 
 
 # ── SHEET 5: SPECIALIST DETAIL ────────────────────────────────────────────────
-def _specialist_detail(wb, data, rm):
+def _specialist_detail(wb, data, rm, am=None):
+    if am is None:
+        am = {}
     ws = wb.create_sheet("Specialist Detail")
     ws.sheet_view.showGridLines = False
 
@@ -662,40 +909,37 @@ def _specialist_detail(wb, data, rm):
         _hdr(ws, row, ci, h, bg=C_ACCENT, sz=10)
     row += 1
 
-    vsl_base     = vsl.get("base_vsl_usd_2005", 3_000_000)
-    cpi_mult     = vsl.get("cpi_multiplier", 1.68)
-    ppp_ratio    = vsl.get("gdp_ppp_ratio", 0.89)
-    income_el    = vsl.get("income_elasticity", 1.0)
-    fx           = vsl.get("usd_to_local_currency", 3.7)
-    life_exp     = vsl.get("life_expectancy_remaining", 35)
-    vsl_local    = vsl.get("computed_vsl_local", 12_800_000)
-    vsly_local   = vsl.get("computed_vsly_local", 365_714)
-    cpi_adj_vsl  = round(vsl_base * cpi_mult)
-    ppp_adj_vsl_usd = round(cpi_adj_vsl * ppp_ratio * income_el)
+    # Build VSL rows using ASSUMPTIONS formula references where available,
+    # falling back to Python-computed static values if am is empty.
+    def _vsl_val(am_key, fallback):
+        ref = am.get(am_key)
+        return f"={ref}" if ref else fallback
 
     VSL_ROWS = [
-        ("1", "Base VSL (OECD, 2005 USD)",       vsl_base,           "#,##0",   "OECD meta-study baseline"),
-        ("2", f"× CPI Multiplier (2005→2024)",    cpi_mult,           "0.00",    "US Bureau of Labor Statistics"),
-        ("3", "= CPI-Adjusted VSL (2024 USD)",    cpi_adj_vsl,        "#,##0",   ""),
-        ("4", f"× GDP PPP Ratio (Israel / OECD)", ppp_ratio,          "0.000",   "World Bank WDI"),
-        ("5", "× Income Elasticity",              income_el,          "0.0",     "Standard for developed economies"),
-        ("6", "= PPP-Adjusted VSL (USD)",         ppp_adj_vsl_usd,    "#,##0",   ""),
-        ("7", f"× Exchange Rate ({cur}/USD)",     fx,                 "0.00",    ""),
-        ("8", f"= VSL in {cur}",                  vsl_local,          "#,##0",   "Used in benefit calculations"),
-        ("9", "÷ Remaining Life Expectancy (yrs)",life_exp,           "0",       "Affected demographic"),
-        ("10",f"= VSLY in {cur}",                 vsly_local,         "#,##0",   "Value per Statistical Life Year"),
+        ("1",  "Base VSL (OECD, 2005 USD)",        _vsl_val("vsl_base",    vsl.get("base_vsl_usd_2005", 3_000_000)), "#,##0",  "OECD meta-study baseline"),
+        ("2",  f"× CPI Multiplier (2005→2024)",     _vsl_val("cpi_mult",    vsl.get("cpi_multiplier", 1.68)),         "0.000",  "US Bureau of Labor Statistics"),
+        ("3",  "= CPI-Adjusted VSL (2024 USD)",     _vsl_val("vsl_cpi_adj", round(vsl.get("base_vsl_usd_2005", 3_000_000) * vsl.get("cpi_multiplier", 1.68))), "#,##0", ""),
+        ("4",  f"× GDP PPP Ratio (Israel / OECD)",  _vsl_val("ppp_ratio",   vsl.get("gdp_ppp_ratio", 0.89)),          "0.000",  "World Bank WDI"),
+        ("5",  "× Income Elasticity",               _vsl_val("income_el",   vsl.get("income_elasticity", 1.0)),        "0.0",    "Standard for developed economies"),
+        ("6",  "= PPP-Adjusted VSL (USD)",          _vsl_val("vsl_ppp_adj", round(vsl.get("base_vsl_usd_2005", 3_000_000) * vsl.get("cpi_multiplier", 1.68) * vsl.get("gdp_ppp_ratio", 0.89) * vsl.get("income_elasticity", 1.0))), "#,##0", ""),
+        ("7",  f"× Exchange Rate ({cur}/USD)",       _vsl_val("fx_rate",     vsl.get("usd_to_local_currency", 3.7)),   "0.00",   ""),
+        ("8",  f"= VSL in {cur}",                   _vsl_val("vsl_local",   vsl.get("computed_vsl_local", 12_800_000)), "#,##0", "Key output — used in benefit formulas"),
+        ("9",  "÷ Remaining Life Expectancy (yrs)", _vsl_val("life_exp",    vsl.get("life_expectancy_remaining", 35)), "0",      "Affected demographic"),
+        ("10", f"= VSLY in {cur}",                  _vsl_val("vsly_local",  vsl.get("computed_vsly_local", 365_714)),  "#,##0",  "Value per Statistical Life Year"),
     ]
+    # Rows that are computed (show in green); others are input references (show in green-link)
+    COMPUTED_STEPS = {"3", "6", "8", "10"}
     for step, param, val, fmt, note in VSL_ROWS:
+        is_computed = step in COMPUTED_STEPS
         _cell(ws, row, 1, step, align="center")
-        _cell(ws, row, 2, param, bold=(step in ("8","10")))
+        _cell(ws, row, 2, param, bold=is_computed)
         c = ws.cell(row=row, column=3, value=val)
-        c.font = Font(name="Arial",
-                      bold=(step in ("8","10")),
-                      color=C_GREEN if step in ("8","10") else BLACK, size=10)
+        c.font = Font(name="Arial", bold=is_computed,
+                      color=C_GREEN if is_computed else GREEN_LK, size=10)
         c.number_format = fmt; c.border = _bd()
         c.alignment = Alignment(horizontal="right")
-        if step in ("8","10"):
-            c.fill = PatternFill("solid", fgColor=C_LIGHT)
+        if is_computed:
+            c.fill = PatternFill("solid", fgColor="F0FDF4")
         _cell(ws, row, 4, note, color="94A3B8")
         row += 1
 
@@ -818,17 +1062,22 @@ def _specialist_detail(wb, data, rm):
 
     n_ben = len(BEN_TYPES)
 
+    # Map each benefit key to its ASSUMPTIONS annual sub-benefit reference
+    # Keys use the full _npv suffix as in BEN_TYPES
+    BEN_TYPE_AM = {
+        "avoided_mortality_npv":      am.get("sub_avoided_mortality_npv",      am.get("sub_avoided_mortality",      "0")),
+        "morbidity_savings_npv":      am.get("sub_morbidity_savings_npv",      am.get("sub_morbidity_savings",      "0")),
+        "skin_cancer_prevention_npv": am.get("sub_skin_cancer_prevention_npv", am.get("sub_skin_cancer_prevention", "0")),
+        "carbon_sequestration_npv":   am.get("sub_carbon_sequestration_npv",   am.get("sub_carbon_sequestration",   "0")),
+        "runoff_reduction_npv":       am.get("sub_runoff_reduction_npv",       am.get("sub_runoff_reduction",       "0")),
+        "air_quality_npv":            am.get("sub_air_quality_npv",            am.get("sub_air_quality",            "0")),
+        "habitat_creation_npv":       am.get("sub_habitat_creation_npv",       am.get("sub_habitat_creation",       "0")),
+        "property_value_uplift_npv":  am.get("sub_property_value_uplift_npv",  am.get("sub_property_value_uplift",  "0")),
+        "roof_longevity_npv":         am.get("sub_roof_longevity_npv",         am.get("sub_roof_longevity",         "0")),
+    }
+
     for mi, m in enumerate(measures):
         inp_col = get_column_letter(mi + 2)  # Inputs sheet column for this measure
-
-        # Compute benefit fractions from advanced_benefits
-        adv = m.get("advanced_benefits") or {}
-        total_adv = sum((adv.get(k, 0) or 0) for k, _ in BEN_TYPES)
-        if total_adv > 0:
-            fracs = [(adv.get(k, 0) or 0) / total_adv for k, _ in BEN_TYPES]
-        else:
-            equal = 1.0 / n_ben
-            fracs = [equal] * n_ben
 
         # Sub-table header
         _sec(ws, row, 1, f"Measure: {m['name']}", span=6 + n_ben); row += 1
@@ -883,9 +1132,18 @@ def _specialist_detail(wb, data, rm):
             c.number_format = "#,##0.0"; c.alignment = Alignment(horizontal="right")
             c.fill = PatternFill("solid", fgColor="F0FDF4")
 
-            # Benefit breakdown columns
-            for bi, (frac, (key, _)) in enumerate(zip(fracs, BEN_TYPES)):
-                c = ws.cell(row=r, column=7+bi, value=f"=D{r}*{frac:.6f}")
+            # Benefit breakdown columns — reference ASSUMPTIONS sub-benefit annual values
+            for bi, (key, _) in enumerate(BEN_TYPES):
+                ann_ref = BEN_TYPE_AM.get(key, "0")
+                if ann_ref == "0":
+                    formula = "=0"
+                elif key in ("property_value_uplift_npv", "roof_longevity_npv"):
+                    # Lump-sum benefits: Year 1 only (discounted but no maturity factor)
+                    formula = f"=IF(A{r}=1,{ann_ref}*E{r},0)"
+                else:
+                    # Recurring benefits: sub_benefit × maturity_factor × discount_factor
+                    formula = f"={ann_ref}*B{r}*E{r}"
+                c = ws.cell(row=r, column=7+bi, value=formula)
                 c.font = Font(name="Arial", color=BLACK, size=9); c.border = _bd()
                 c.number_format = "#,##0.0"; c.alignment = Alignment(horizontal="right")
 
@@ -902,17 +1160,27 @@ def _specialist_detail(wb, data, rm):
         c.number_format = "#,##0.0"; c.border = _bd()
         c.fill = PatternFill("solid", fgColor=C_LIGHT)
         c.alignment = Alignment(horizontal="right")
-        # Track this total so Benefit Breakdown can reference it
+        # Track overall total so Benefit Breakdown can reference it
         rm.setdefault("spec_benefit_totals", []).append(
             {"measure_name": m["name"], "row": row, "col": 6}
         )
-        for bi in range(n_ben):
-            c = ws.cell(row=row, column=7+bi,
-                        value=f"=SUM({get_column_letter(7+bi)}{DATA_START}:{get_column_letter(7+bi)}{DATA_END})")
+        # Write per-category SUM cells and track their positions
+        category_cols = {}
+        for bi, (key, _) in enumerate(BEN_TYPES):
+            col_idx = 7 + bi
+            c = ws.cell(row=row, column=col_idx,
+                        value=f"=SUM({get_column_letter(col_idx)}{DATA_START}:{get_column_letter(col_idx)}{DATA_END})")
             c.font = Font(name="Arial", bold=True, color=BLACK, size=10)
             c.number_format = "#,##0.0"; c.border = _bd()
             c.fill = PatternFill("solid", fgColor=C_LIGHT)
             c.alignment = Alignment(horizontal="right")
+            category_cols[key] = col_idx
+        # Track per-category SUM row/col for Benefit Breakdown to link to
+        rm.setdefault("spec_category_totals", []).append({
+            "measure_name": m["name"],
+            "category_cols": category_cols,
+            "sum_row": row,
+        })
         row += 1
 
         _cell(ws, row, 1, "Total Undiscounted Benefit", bold=False, bg=None)
@@ -1000,17 +1268,39 @@ def _benefit_breakdown(wb, data, rm):
         ("roof_longevity_npv",         "Roof Longevity Extension — NPV"),
     ]
 
+    spec_cat = rm.get("spec_category_totals", [])
+
     first_benefit_row = row
     for key, label in BENEFIT_LABELS:
         # Only show rows that are used by at least one measure
-        if not any((m.get("advanced_benefits") or {}).get(key) for m in measures):
+        has_data = (
+            any((m.get("advanced_benefits") or {}).get(key) for m in measures)
+            or any(
+                mi < len(spec_cat) and key in spec_cat[mi].get("category_cols", {})
+                for mi in range(len(measures))
+            )
+        )
+        if not has_data:
             continue
         _cell(ws, row, 1, label, bold=False, bg="F0FDF4")
         row_total_cells = []
         for ci, m in enumerate(measures, 2):
-            val = (m.get("advanced_benefits") or {}).get(key, 0) or 0
-            c = ws.cell(row=row, column=ci, value=val)
-            c.font = Font(name="Arial", color=BLACK, size=10)
+            mi = ci - 2
+            # Prefer linking to Specialist Detail formula SUM
+            formula_val = None
+            if mi < len(spec_cat):
+                info = spec_cat[mi]
+                col_idx = info["category_cols"].get(key)
+                if col_idx:
+                    formula_val = f"='Specialist Detail'!{get_column_letter(col_idx)}${info['sum_row']}"
+            if formula_val:
+                c = ws.cell(row=row, column=ci, value=formula_val)
+                c.font = Font(name="Arial", color=GREEN_LK, size=10)
+            else:
+                # Fallback: static value from advanced_benefits
+                val = (m.get("advanced_benefits") or {}).get(key, 0) or 0
+                c = ws.cell(row=row, column=ci, value=val)
+                c.font = Font(name="Arial", color=BLACK, size=10)
             c.number_format = "#,##0.0"; c.border = _bd()
             c.alignment = Alignment(horizontal="right")
             c.fill = PatternFill("solid", fgColor="F0FDF4")
