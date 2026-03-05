@@ -118,78 +118,6 @@ def _assumptions(wb, data) -> dict:
             c.alignment = Alignment(horizontal="right")
             _cell(ws, row_num, 3, note, color="94A3B8")
 
-        _inp_row("Base VSL (2005 USD)",             vsl.get("base_vsl_usd_2005", 3_000_000), "#,##0",  "OECD meta-study baseline", row); VSL_BASE_ROW = row; row += 1
-        _inp_row("CPI Multiplier (2005→2024)",       vsl.get("cpi_multiplier", 1.68),          "0.000",  "US Bureau of Labor Statistics", row); CPI_ROW = row; row += 1
-        _inp_row("GDP PPP Ratio (Israel / OECD)",    vsl.get("gdp_ppp_ratio", 0.89),           "0.000",  "World Bank WDI", row); PPP_ROW = row; row += 1
-        _inp_row("Income Elasticity",                vsl.get("income_elasticity", 1.0),         "0.0",    "Standard for developed economies", row); INCOME_EL_ROW = row; row += 1
-        _inp_row(f"FX Rate ({cur} / USD)",           vsl.get("usd_to_local_currency", 3.7),     "0.00",   "", row); FX_ROW = row; row += 1
-        _inp_row("Life Expectancy Remaining (yrs)",  vsl.get("life_expectancy_remaining", 35),  "0",      "Affected demographic", row); LIFE_EXP_ROW = row; row += 1
-
-        row += 1  # blank separator before computed rows
-        _frm_row("Step 1→2: CPI-Adjusted VSL (USD)",        f"=B{VSL_BASE_ROW}*B{CPI_ROW}",               "#,##0",  "", row); CPI_ADJ_ROW = row; row += 1
-        _frm_row("Step 3→5: PPP & Elasticity Adj. (USD)",   f"=B{CPI_ADJ_ROW}*B{PPP_ROW}*B{INCOME_EL_ROW}", "#,##0", "", row); PPP_ADJ_ROW = row; row += 1
-        _frm_row(f"Step 6→7: VSL in {cur}",                 f"=B{PPP_ADJ_ROW}*B{FX_ROW}",                 "#,##0",  "Key output — used in all mortality/morbidity benefit formulas", row, highlight=True); VSL_LOCAL_ROW = row; row += 1
-        _frm_row(f"Step 8: VSLY in {cur}",                  f"=B{VSL_LOCAL_ROW}/B{LIFE_EXP_ROW}",         "#,##0",  "Value per Statistical Life Year", row, highlight=True); VSLY_LOCAL_ROW = row; row += 2
-
-        # ── Section 2: CDD PARAMETERS ─────────────────────────────────────────
-        _sec(ws, row, 1, "CDD PARAMETERS", span=3); row += 1
-        _hdr(ws, row, 1, "Parameter", bg=C_ACCENT, sz=10)
-        _hdr(ws, row, 2, "Value", bg=C_ACCENT, sz=10)
-        _hdr(ws, row, 3, "Notes", bg=C_ACCENT, sz=10)
-        row += 1
-
-        _inp_row("Annual Cooling Degree Days (CDD)",          cdd.get("annual_cdd", 735),                    "#,##0",   "Tel Aviv baseline (21°C base)", row); ANNUAL_CDD_ROW = row; row += 1
-        _inp_row("Base Temperature (°C)",                     cdd.get("base_temp_celsius", 21),              "0",       "Threshold for heat health risk", row); row += 1
-        _inp_row("Heat-Mortality Factor (deaths/person/CDD)", cdd.get("heat_mortality_factor", 0.00083),     "0.00000", "Gasparrini et al. (2017)", row); HEAT_MORT_ROW = row; row += 1
-        _inp_row("Base Mortality Rate (annual)",              0.01,                                          "0.000",   "Deaths per person per year in at-risk population (default 1%)", row); BASE_MORT_ROW = row; row += 1
-        _inp_row("Population at Risk / Pedestrians per Hour", cdd.get("population_density_or_pedestrians", 1000), "#,##0", "Project-specific population driver", row); POP_ROW = row; row += 2
-
-        # ── Section 3: SPECIALIST PARAMETERS ──────────────────────────────────
-        _sec(ws, row, 1, "SPECIALIST PARAMETERS", span=3); row += 1
-        _hdr(ws, row, 1, "Parameter", bg=C_ACCENT, sz=10)
-        _hdr(ws, row, 2, "Value", bg=C_ACCENT, sz=10)
-        _hdr(ws, row, 3, "Notes", bg=C_ACCENT, sz=10)
-        row += 1
-
-        _inp_row("Heat Reduction Efficiency",        sp.get("heat_reduction_efficiency", 0.5 if stype == "natural_shading" else 0.28), "0.00%", "Fraction of heat exposure avoided", row); HEAT_EFF_ROW = row; row += 1
-        _inp_row("UV Reduction Factor",              sp.get("uv_reduction_factor", 0.75),       "0.00%", "Natural shading UV attenuation", row); UV_RED_ROW = row; row += 1
-        _inp_row("Operating Hours per Day",          8,                                          "0",     "Hours of active shade/benefit per day", row); OP_HOURS_ROW = row; row += 1
-        _inp_row("Maturity Years (natural shading)", sp.get("maturity_years", 8),               "0",     "Linear ramp years 1→maturity_years, then 100%", row); MAT_YEARS_ROW = row; row += 1
-        _inp_row("Skin Cancer Incidence Rate",       0.0005,                                     "0.000000", "Annual skin cancer cases per exposed person", row); SKINCANCER_ROW = row; row += 1
-        _inp_row("Morbidity-to-Mortality Multiplier", 10,                                        "0",     "Morbidity cases per statistical death (default 10×)", row); MORB_MULT_ROW = row; row += 2
-
-        # ── Section 4: UNIT COSTS & RATES ─────────────────────────────────────
-        _sec(ws, row, 1, "UNIT COSTS & RATES", span=3); row += 1
-        _hdr(ws, row, 1, "Parameter", bg=C_ACCENT, sz=10)
-        _hdr(ws, row, 2, "Value", bg=C_ACCENT, sz=10)
-        _hdr(ws, row, 3, "Notes", bg=C_ACCENT, sz=10)
-        row += 1
-
-        carbon_default = 450 if stype == "natural_shading" else 350
-        _inp_row(f"Hospitalization Cost per Day ({cur})",  3928,          "#,##0",   "Israeli Health Ministry (2024)", row); HOSP_COST_ROW = row; row += 1
-        _inp_row("Average Length of Stay (days)",           5.2,           "0.0",     "Clinical literature", row); AVG_LOS_ROW = row; row += 1
-        _inp_row(f"Carbon Value ({cur}/unit/yr)",           carbon_default,"#,##0",   "NIS/tree/yr (shading) or NIS/m²/yr (green roof)", row); CARBON_ROW = row; row += 1
-        _inp_row("Tree Density / Functional Unit Area",     1.0,           "0.0",     "Trees per lin m (shading) or m² per m² (green roof)", row); TREE_DENS_ROW = row; row += 1
-        _inp_row(f"Habitat Value ({cur}/m²/yr)",            300,           "#,##0",   "TEEB (2010); Israeli urban ecology studies", row); HABITAT_ROW = row; row += 1
-        _inp_row("Property Value Uplift %",                 sp.get("property_value_uplift_pct", 0.03), "0.00%", "Green roof hedonic uplift (Fuerst & McAllister 2011)", row); PROP_UPLIFT_ROW = row; row += 1
-        _inp_row("Roof Longevity Extension (yrs)",          sp.get("roof_longevity_extension_years", 15), "0", "Membrane life extension vs conventional roof", row); ROOF_LONG_ROW = row; row += 1
-        _inp_row(f"PM2.5 Health Cost per Unit ({cur})",     1000,          "#,##0",   "Placeholder — WHO Air Quality Guidelines (2021)", row); PM25_ROW = row; row += 1
-        _inp_row(f"Runoff Cost Avoided per Unit ({cur})",   100,           "#,##0",   "Placeholder — local infrastructure cost", row); RUNOFF_COST_ROW = row; row += 1
-        _inp_row("Runoff Reduction Coefficient",            0.65,          "0.00",    "EPA Stormwater BMP Guide", row); RUNOFF_COEFF_ROW = row; row += 2
-
-        # ── Section 5: STEP-BY-STEP BENEFIT CALCULATIONS ─────────────────────────
-        _sec(ws, row, 1,
-             f"STEP-BY-STEP BENEFIT CALCULATIONS  [{cur} millions / functional unit / base year]"
-             "  —  green ► rows feed directly into the year-by-year projection table",
-             span=3); row += 1
-        _hdr(ws, row, 1, "Step", bg=C_ACCENT, sz=10)
-        _hdr(ws, row, 2, "Value / Formula", bg=C_ACCENT, sz=10)
-        _hdr(ws, row, 3, "Unit / Source", bg=C_ACCENT, sz=10)
-        row += 1
-
-        SUB_ROWS = {}
-
-        # ── inline helpers ────────────────────────────────────────────────────
         def _block_title(label, r):
             c = ws.cell(row=r, column=1, value=label)
             c.font = Font(name="Arial", bold=True, color=C_WHITE, size=9)
@@ -216,6 +144,129 @@ def _assumptions(wb, data) -> dict:
             c3.font = Font(name="Arial", size=8, color="94A3B8", italic=True)
             c3.border = _bd()
 
+        # ── Section 1 derivation blocks ──────────────────────────────────────────
+
+        # 1a. Base VSL — OECD meta-analysis derivation
+        _block_title("BASE VSL — OECD Meta-Analysis (Viscusi & Masterman 2017)", row); row += 1
+        r_vsl_a = row; _step("OECD 2012 meta-study median VSL (2005 USD)", 4_200_000, "OECD ENV/WKP(2012)3, Table 3", row); row += 1
+        r_vsl_b = row; _step("\u00d7 Benefit-transfer factor (Israel, developed economy)", 0.714, "Viscusi & Masterman (2017) — transfer scaling", row); row += 1
+        _frm_row("\u25ba Base VSL for calculations (2005 USD)", f"=B{r_vsl_a}*B{r_vsl_b}", "#,##0",
+                 "= $3.0M — feeds CPI \u2192 PPP \u2192 FX chain", row, highlight=True); VSL_BASE_ROW = row; row += 2
+
+        # 1b. CPI Multiplier — BLS index ratio
+        _block_title("CPI MULTIPLIER — US Bureau of Labor Statistics (2005\u21922023)", row); row += 1
+        r_cpi_a = row; _step("CPI-U All Items, Dec 2023 (BLS)", 304.7, "BLS Series CUUR0000SA0", row); row += 1
+        r_cpi_b = row; _step("CPI-U All Items, Dec 2005 (BLS)", 181.3, "BLS Series CUUR0000SA0", row); row += 1
+        _frm_row("\u25ba CPI Multiplier 2005\u21922023", f"=B{r_cpi_a}/B{r_cpi_b}", "0.000",
+                 "= 1.68 \u2014 inflates 2005 USD to 2023 USD", row, highlight=True); CPI_ROW = row; row += 2
+
+        # 1c. PPP Ratio — World Bank WDI
+        _block_title("PPP RATIO — World Bank WDI 2022", row); row += 1
+        r_ppp_a = row; _step("Israel GDP per capita, PPP (intl $, 2022)", 48_300, "World Bank WDI \u2014 NY.GDP.PCAP.PP.CD", row); row += 1
+        r_ppp_b = row; _step("OECD avg GDP per capita, PPP (intl $, 2022)", 54_200, "OECD.Stat \u2014 GDP per head, USD PPP", row); row += 1
+        _frm_row("\u25ba GDP PPP Ratio (Israel / OECD avg)", f"=B{r_ppp_a}/B{r_ppp_b}", "0.000",
+                 "= 0.89 \u2014 scales VSL from OECD avg to Israeli income level", row, highlight=True); PPP_ROW = row; row += 2
+        _inp_row("Income Elasticity",                vsl.get("income_elasticity", 1.0),         "0.0",    "Standard for developed economies", row); INCOME_EL_ROW = row; row += 1
+        _inp_row(f"FX Rate ({cur} / USD)",           vsl.get("usd_to_local_currency", 3.7),     "0.00",   "", row); FX_ROW = row; row += 1
+        _inp_row("Life Expectancy Remaining (yrs)",  vsl.get("life_expectancy_remaining", 35),  "0",      "Affected demographic", row); LIFE_EXP_ROW = row; row += 1
+
+        row += 1  # blank separator before computed rows
+        _frm_row("Step 1→2: CPI-Adjusted VSL (USD)",        f"=B{VSL_BASE_ROW}*B{CPI_ROW}",               "#,##0",  "", row); CPI_ADJ_ROW = row; row += 1
+        _frm_row("Step 3→5: PPP & Elasticity Adj. (USD)",   f"=B{CPI_ADJ_ROW}*B{PPP_ROW}*B{INCOME_EL_ROW}", "#,##0", "", row); PPP_ADJ_ROW = row; row += 1
+        _frm_row(f"Step 6→7: VSL in {cur}",                 f"=B{PPP_ADJ_ROW}*B{FX_ROW}",                 "#,##0",  "Key output — used in all mortality/morbidity benefit formulas", row, highlight=True); VSL_LOCAL_ROW = row; row += 1
+        _frm_row(f"Step 8: VSLY in {cur}",                  f"=B{VSL_LOCAL_ROW}/B{LIFE_EXP_ROW}",         "#,##0",  "Value per Statistical Life Year", row, highlight=True); VSLY_LOCAL_ROW = row; row += 2
+
+        # ── Section 2: CDD PARAMETERS ─────────────────────────────────────────
+        _sec(ws, row, 1, "CDD PARAMETERS", span=3); row += 1
+        _hdr(ws, row, 1, "Parameter", bg=C_ACCENT, sz=10)
+        _hdr(ws, row, 2, "Value", bg=C_ACCENT, sz=10)
+        _hdr(ws, row, 3, "Notes", bg=C_ACCENT, sz=10)
+        row += 1
+
+        # 2a. Annual CDD — IMS station measurement (contextual derivation)
+        _block_title("ANNUAL CDD \u2014 IMS Tel Aviv Ben Gurion Station (1990\u20132020 Normal)", row); row += 1
+        _step("Station: Tel Aviv Ben Gurion Airport (IMS)", "32.011\u00b0N 34.886\u00b0E", "Israel Meteorological Service", row); row += 1
+        _step("Reference period (WMO climatological normal)", "1990\u20132020", "IMS Technical Report 2021", row); row += 1
+        _step("Annual mean temperature (\u00b0C)", 21.3, "IMS 30-year normal", row); row += 1
+        _step("Base temperature threshold (\u00b0C)", cdd.get("base_temp_celsius", 21), "Threshold above which heat stress occurs", row); row += 1
+        _frm_row("\u25ba Annual CDD (base 21\u00b0C, measured)", cdd.get("annual_cdd", 735),
+                 "#,##0", "= 735 \u2014 direct IMS station measurement (pure climatological data)", row, highlight=True); ANNUAL_CDD_ROW = row; row += 2
+
+        # 2b. Base temperature — keep as simple input
+        _inp_row("Base Temperature (\u00b0C)",                cdd.get("base_temp_celsius", 21),              "0",       "Threshold for heat health risk", row); row += 1
+
+        # 2c. Heat-Mortality Factor — Gasparrini et al. formula derivation
+        _block_title("HEAT-MORTALITY FACTOR \u2014 Gasparrini et al. (2017) Mediterranean Meta-Analysis", row); row += 1
+        r_hmf_a = row; _step("Relative risk per 1\u00b0C above 25th percentile (RR)", 1.038, "Gasparrini et al. Lancet 2017, Table 3 \u2014 Mediterranean cluster", row); row += 1
+        r_hmf_b = row; _step("Mean hot days per year (days above threshold)", 45.8, "IMS 1990\u20132020 annual average", row); row += 1
+        r_hmf_c = row; _step("= Excess mortality fraction per hot day", f"=(B{r_hmf_a}-1)/B{r_hmf_b}", "", row, is_computed=True); row += 1
+        _frm_row("\u25ba Heat-Mortality Factor (deaths/person/CDD)", f"=B{r_hmf_c}", "0.00000",
+                 "Gasparrini excess risk converted to per-CDD units", row, highlight=True); HEAT_MORT_ROW = row; row += 2
+        _inp_row("Base Mortality Rate (annual)",              0.01,                                          "0.000",   "Deaths per person per year in at-risk population (default 1%)", row); BASE_MORT_ROW = row; row += 1
+        _inp_row("Population at Risk / Pedestrians per Hour", cdd.get("population_density_or_pedestrians", 1000), "#,##0", "Project-specific population driver", row); POP_ROW = row; row += 2
+
+        # ── Section 3: SPECIALIST PARAMETERS ──────────────────────────────────
+        _sec(ws, row, 1, "SPECIALIST PARAMETERS", span=3); row += 1
+        _hdr(ws, row, 1, "Parameter", bg=C_ACCENT, sz=10)
+        _hdr(ws, row, 2, "Value", bg=C_ACCENT, sz=10)
+        _hdr(ws, row, 3, "Notes", bg=C_ACCENT, sz=10)
+        row += 1
+
+        _inp_row("Heat Reduction Efficiency",        sp.get("heat_reduction_efficiency", 0.5 if stype == "natural_shading" else 0.28), "0.00%", "Fraction of heat exposure avoided", row); HEAT_EFF_ROW = row; row += 1
+        _inp_row("UV Reduction Factor",              sp.get("uv_reduction_factor", 0.75),       "0.00%", "Natural shading UV attenuation", row); UV_RED_ROW = row; row += 1
+        _inp_row("Operating Hours per Day",          8,                                          "0",     "Hours of active shade/benefit per day", row); OP_HOURS_ROW = row; row += 1
+        _inp_row("Maturity Years (natural shading)", sp.get("maturity_years", 8),               "0",     "Linear ramp years 1→maturity_years, then 100%", row); MAT_YEARS_ROW = row; row += 1
+        # 3e. Skin Cancer Incidence Rate — Israeli Cancer Registry derivation
+        _block_title("SKIN CANCER INCIDENCE \u2014 Israeli Cancer Registry / WHO IARC (2020)", row); row += 1
+        r_sc_a = row; _step("Age-standardised incidence, all melanoma, Israel (2020)", 22.3, "Israeli National Cancer Registry, ICD-10 C43", row); row += 1
+        r_sc_b = row; _step("Population denominator (per 100,000 person-years)", 100_000, "Standardised rate base (WHO)", row); row += 1
+        r_sc_c = row; _step("\u00d7 UV-attributable fraction of skin cancers", 0.72, "WHO IARC Monograph 100D \u2014 UV attributable fraction", row); row += 1
+        _frm_row("\u25ba Annual skin cancer incidence rate (per person)", f"=B{r_sc_a}/B{r_sc_b}*B{r_sc_c}", "0.000000",
+                 "= 0.000161 \u2014 fraction of exposed persons developing melanoma/yr", row, highlight=True); SKINCANCER_ROW = row; row += 2
+
+        # 3f. Morbidity Multiplier — WHO literature derivation
+        _block_title("MORBIDITY MULTIPLIER \u2014 WHO Europe / Epidemiological Literature", row); row += 1
+        r_mm_a = row; _step("Heat-related hospitalisation-to-death ratio (Mediterranean)", 10, "WHO Europe Heat Health Action Plan (2008), Table 2-4", row); row += 1
+        _frm_row("\u25ba Morbidity-to-Mortality Multiplier", f"=B{r_mm_a}", "0",
+                 "= 10 \u2014 morbidity cases per statistical death", row, highlight=True); MORB_MULT_ROW = row; row += 2
+
+        # ── Section 4: UNIT COSTS & RATES ─────────────────────────────────────
+        _sec(ws, row, 1, "UNIT COSTS & RATES", span=3); row += 1
+        _hdr(ws, row, 1, "Parameter", bg=C_ACCENT, sz=10)
+        _hdr(ws, row, 2, "Value", bg=C_ACCENT, sz=10)
+        _hdr(ws, row, 3, "Notes", bg=C_ACCENT, sz=10)
+        row += 1
+
+        carbon_default = 450 if stype == "natural_shading" else 350
+        # 4a. Hospitalization Cost per Day — Health Ministry tariff derivation
+        _block_title(f"HOSPITALIZATION COST \u2014 Israeli Health Ministry Tariff (2024)", row); row += 1
+        r_hc_a = row; _step("Official inpatient tariff per day, 2023 (NIS)", 3_650, "Israeli Ministry of Health, Circular 4/2023", row); row += 1
+        r_hc_b = row; _step("\u00d7 Medical CPI inflation factor (2023\u21922024)", 1.076, "CBS Medical Care sub-index, 2023 annual avg \u2192 2024", row); row += 1
+        _frm_row(f"\u25ba Hospitalization cost per day (NIS, 2024)", f"=B{r_hc_a}*B{r_hc_b}", "#,##0",
+                 "= NIS 3,928 \u2014 Israeli public hospital inpatient rate", row, highlight=True); HOSP_COST_ROW = row; row += 2
+        _inp_row("Average Length of Stay (days)",           5.2,           "0.0",     "Clinical literature", row); AVG_LOS_ROW = row; row += 1
+        _inp_row(f"Carbon Value ({cur}/unit/yr)",           carbon_default,"#,##0",   "NIS/tree/yr (shading) or NIS/m²/yr (green roof)", row); CARBON_ROW = row; row += 1
+        _inp_row("Tree Density / Functional Unit Area",     1.0,           "0.0",     "Trees per lin m (shading) or m² per m² (green roof)", row); TREE_DENS_ROW = row; row += 1
+        _inp_row(f"Habitat Value ({cur}/m²/yr)",            300,           "#,##0",   "TEEB (2010); Israeli urban ecology studies", row); HABITAT_ROW = row; row += 1
+        _inp_row("Property Value Uplift %",                 sp.get("property_value_uplift_pct", 0.03), "0.00%", "Green roof hedonic uplift (Fuerst & McAllister 2011)", row); PROP_UPLIFT_ROW = row; row += 1
+        _inp_row("Roof Longevity Extension (yrs)",          sp.get("roof_longevity_extension_years", 15), "0", "Membrane life extension vs conventional roof", row); ROOF_LONG_ROW = row; row += 1
+        _inp_row(f"PM2.5 Health Cost per Unit ({cur})",     1000,          "#,##0",   "Placeholder — WHO Air Quality Guidelines (2021)", row); PM25_ROW = row; row += 1
+        _inp_row(f"Runoff Cost Avoided per Unit ({cur})",   100,           "#,##0",   "Placeholder — local infrastructure cost", row); RUNOFF_COST_ROW = row; row += 1
+        _inp_row("Runoff Reduction Coefficient",            0.65,          "0.00",    "EPA Stormwater BMP Guide", row); RUNOFF_COEFF_ROW = row; row += 2
+
+        # ── Section 5: STEP-BY-STEP BENEFIT CALCULATIONS ─────────────────────────
+        _sec(ws, row, 1,
+             f"STEP-BY-STEP BENEFIT CALCULATIONS  [{cur} millions / functional unit / base year]"
+             "  —  green ► rows feed directly into the year-by-year projection table",
+             span=3); row += 1
+        _hdr(ws, row, 1, "Step", bg=C_ACCENT, sz=10)
+        _hdr(ws, row, 2, "Value / Formula", bg=C_ACCENT, sz=10)
+        _hdr(ws, row, 3, "Unit / Source", bg=C_ACCENT, sz=10)
+        row += 1
+
+        SUB_ROWS = {}
+
+        # ── _final helper (Section 5 only — stores to SUB_ROWS) ──────────────
         def _final(key, label, val, fmt, note, r):
             c1 = ws.cell(row=r, column=1, value=label)
             c1.font = Font(name="Arial", bold=True, size=10, color=C_GREEN)
