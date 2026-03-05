@@ -53,16 +53,20 @@ def _widths(ws, d):
 
 def _auto_widths(ws, min_w=10, max_w=55):
     """Auto-fit column widths based on cell content length."""
+    if not ws.max_row or not ws.max_column:
+        return
     for col_cells in ws.columns:
-        max_len = 0
-        col_letter = col_cells[0].column_letter
-        for cell in col_cells:
-            try:
-                cell_len = len(str(cell.value)) if cell.value is not None else 0
-                max_len = max(max_len, cell_len)
-            except Exception:
-                pass
-        ws.column_dimensions[col_letter].width = min(max_w, max(min_w, max_len + 2))
+        if not col_cells:
+            continue
+        try:
+            col_letter = col_cells[0].column_letter
+            max_len = 0
+            for cell in col_cells:
+                if cell.value is not None:
+                    max_len = max(max_len, len(str(cell.value)))
+            ws.column_dimensions[col_letter].width = min(max_w, max(min_w, max_len + 2))
+        except (AttributeError, IndexError):
+            continue
 
 
 def build_excel(data: dict, path: str):

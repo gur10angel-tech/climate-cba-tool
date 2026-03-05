@@ -83,6 +83,20 @@ h1 {
     border: none !important;
 }
 
+
+[data-baseweb="input"] > div,
+[data-baseweb="input"] > div:focus,
+[data-baseweb="input"] > div:focus-within {
+    outline: none !important;
+    box-shadow: none !important;
+    border-color: #d4d4d4 !important;
+}
+[data-baseweb="input"]:focus-within > div {
+    border-color: #16a34a !important;
+    box-shadow: none !important;
+    outline: none !important;
+}
+
 .stTextArea textarea {
     border: 1.5px solid #d4d4d4 !important;
     border-radius: 12px !important;
@@ -134,6 +148,20 @@ h1 {
 }
 
 .stButton > button:hover {
+    background: #166534 !important;
+}
+
+
+[data-testid="stFormSubmitButton"] > button {
+    background: #15803d !important;
+    color: #f9fafb !important;
+    border: none !important;
+    border-radius: 999px !important;
+    font-family: 'IBM Plex Mono', monospace !important;
+    font-size: 0.8rem !important;
+    padding: 0.55rem 1.5rem !important;
+}
+[data-testid="stFormSubmitButton"] > button:hover {
     background: #166534 !important;
 }
 
@@ -536,14 +564,16 @@ with chat_container:
 # ── Input ──────────────────────────────────────────────────────────────────────
 if st.session_state.stage != "done":
     with st.form("chat_form", clear_on_submit=True):
-        user_input = st.text_area(
-            "",
-            placeholder="Type your message...",
-            label_visibility="collapsed",
-            key="user_input",
-            height=110,
-        )
-        send = st.form_submit_button("Send →", use_container_width=True)
+        col1, col2 = st.columns([6, 1])
+        with col1:
+            user_input = st.text_input(
+                "",
+                placeholder="Type your message…  (Enter to send)",
+                label_visibility="collapsed",
+                key="user_input",
+            )
+        with col2:
+            send = st.form_submit_button("Send →", use_container_width=True)
 
     if send and user_input.strip() and st.session_state.api_key:
         st.session_state.messages.append({"role": "user", "content": user_input})
