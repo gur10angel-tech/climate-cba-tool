@@ -1,6 +1,7 @@
 import streamlit as st
 import anthropic
 import json
+import re
 from excel_builder import build_excel
 import tempfile, os
 import markdown as md_lib
@@ -80,6 +81,22 @@ h1 {
 .stTextInput > div:focus-within {
     outline: none !important;
     border: none !important;
+}
+
+.stTextArea textarea {
+    border: 1.5px solid #d4d4d4 !important;
+    border-radius: 12px !important;
+    font-size: 0.95rem !important;
+    padding: 0.6rem 0.9rem !important;
+    background: #f9fafb !important;
+    resize: vertical;
+}
+
+.stTextArea textarea:focus {
+    border-color: #16a34a !important;
+    box-shadow: 0 0 0 1px rgba(22, 163, 74, 0.35) !important;
+    background: #ffffff !important;
+    outline: none !important;
 }
 
 .chat-msg-ai table {
@@ -519,16 +536,14 @@ with chat_container:
 # ── Input ──────────────────────────────────────────────────────────────────────
 if st.session_state.stage != "done":
     with st.form("chat_form", clear_on_submit=True):
-        col1, col2 = st.columns([5, 1])
-        with col1:
-            user_input = st.text_input(
-                "",
-                placeholder="Type your message...",
-                label_visibility="collapsed",
-                key="user_input",
-            )
-        with col2:
-            send = st.form_submit_button("Send →")
+        user_input = st.text_area(
+            "",
+            placeholder="Type your message...",
+            label_visibility="collapsed",
+            key="user_input",
+            height=110,
+        )
+        send = st.form_submit_button("Send →", use_container_width=True)
 
     if send and user_input.strip() and st.session_state.api_key:
         st.session_state.messages.append({"role": "user", "content": user_input})
@@ -592,13 +607,13 @@ Ask all questions in one message."""
             stype = st.session_state.specialist_type
             if stype == "natural_shading":
                 prompt_text = NATURAL_SHADING_DATA_PROMPT.replace("USER_INPUT_PLACEHOLDER", user_input)
-                max_tok = 4000
+                max_tok = 6000
             elif stype == "green_roof":
                 prompt_text = GREEN_ROOF_DATA_PROMPT.replace("USER_INPUT_PLACEHOLDER", user_input)
-                max_tok = 4000
+                max_tok = 6000
             else:
                 prompt_text = GENERIC_DATA_PROMPT.replace("USER_INPUT_PLACEHOLDER", user_input)
-                max_tok = 2000
+                max_tok = 4000
 
             with st.spinner("Building analysis..."):
                 history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
@@ -606,10 +621,9 @@ Ask all questions in one message."""
                 resp = client.messages.create(model="claude-opus-4-6", max_tokens=max_tok, messages=history)
 
             raw = resp.content[0].text.strip()
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                if raw.startswith("json"): raw = raw[4:]
-                raw = raw.rsplit("```", 1)[0]
+            fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw)
+            if fence:
+                raw = fence.group(1).strip()
 
             try:
                 data = json.loads(raw)
