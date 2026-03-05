@@ -92,7 +92,7 @@ def _assumptions(wb, data) -> dict:
     row = 4
 
     # ── Section 1: VSL PARAMETERS (8-Step Chain) ───────────────────────────────
-    if stype in ("natural_shading", "green_roof") and vsl:
+    if True:  # universal engine — defaults handle all non-specialist cases
         _sec(ws, row, 1, "VSL PARAMETERS — 8-STEP DERIVATION CHAIN", span=3); row += 1
         _hdr(ws, row, 1, "Parameter", bg=C_ACCENT, sz=10)
         _hdr(ws, row, 2, "Value", bg=C_ACCENT, sz=10)
@@ -435,15 +435,6 @@ def _assumptions(wb, data) -> dict:
         am["sub_roof_longevity"]         = am.get("sub_roof_longevity_npv",         am.get("sub_roof_longevity"))
         return am
 
-    else:
-        # Non-specialist: minimal ASSUMPTIONS sheet with just a cross-reference note
-        _sec(ws, row, 1, "GLOBAL PARAMETER CROSS-REFERENCE", span=3); row += 1
-        c = ws.cell(row=row, column=1, value="Discount Rate and Time Horizon are set in the Inputs sheet (blue cells). No specialist VSL/CDD methodology active for this analysis.")
-        c.font = Font(name="Arial", size=10, color="475569")
-        c.alignment = Alignment(wrap_text=True)
-        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=3)
-        _auto_widths(ws)
-        return {}
 
 
 # ── SHEET: CALCULATIONS ────────────────────────────────────────────────────────
@@ -859,14 +850,16 @@ def _inputs(wb, data, am=None):
             c.alignment = Alignment(horizontal="right")
         _cell(ws, row, n+2, "← derived from ASSUMPTIONS benefit components (see CALCULATIONS sheet for breakdown)")
     else:
-        # Non-specialist: blue editable
+        # Fallback — should never fire once the universal ASSUMPTIONS engine is active
         for ci, m in enumerate(measures, 2):
-            c = ws.cell(row=row, column=ci, value=m["annual_benefit"])
-            c.font = Font(name="Arial", bold=True, color=BLUE, size=10)
+            fallback = m.get("annual_benefit") or 0
+            c = ws.cell(row=row, column=ci, value=fallback)
+            c.font = Font(name="Arial", bold=True, color=C_RED, size=10)
             c.number_format = "#,##0.0"; c.border = _bd()
-            c.fill = PatternFill("solid", fgColor=C_LIGHT)
+            c.fill = PatternFill("solid", fgColor="FFF0F0")
             c.alignment = Alignment(horizontal="right")
-        _cell(ws, row, n+2, "Annual monetised benefit")
+        _cell(ws, row, n+2,
+              "\u26a0 FALLBACK \u2014 ASSUMPTIONS engine not active. Check cdd_params / vsl_params in data payload.")
     row += 1
 
     # Benefit component expansion — specialist only, inserted between Annual Benefit and Lifetime
