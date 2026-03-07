@@ -698,7 +698,7 @@ Ask all questions in one message."""
             st.session_state.stage = "data"
             st.rerun()
 
-        # ── Stage: user provides data → build analysis ─────────────────────────
+# ── Stage: user provides data → build analysis ─────────────────────────
         elif st.session_state.stage == "data":
             stype = st.session_state.specialist_type
             if stype == "natural_shading":
@@ -711,10 +711,23 @@ Ask all questions in one message."""
                 prompt_text = GENERIC_DATA_PROMPT.replace("USER_INPUT_PLACEHOLDER", user_input)
                 max_tok = 4000
 
+            # Query KB for CBA-specific data
+            kb_context = query_bedrock_kb(
+                f"cost benefit analysis BCR NPV {st.session_state.problem_text} {user_input}"
+            )
+            if kb_context and not kb_context.startswith("[KB unavailable"):
+                kb_addition = f"""
+
+ADDITIONAL CONTEXT FROM PEER-REVIEWED LITERATURE (use these figures where relevant):
+{kb_context}
+"""
+                prompt_text = prompt_text + kb_addition
+
             with st.spinner("Building analysis..."):
                 history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
                 history.append({"role": "user", "content": prompt_text})
                 resp = client.messages.create(model="claude-opus-4-6", max_tokens=max_tok, messages=history)
+
 
             raw = resp.content[0].text.strip()
             fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw)
