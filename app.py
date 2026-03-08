@@ -821,6 +821,24 @@ with tab_analysis:
                     st.session_state[k] = None if k == "analysis_data" else ""
             st.rerun()
 
+# ── Helpers for safe API calls ─────────────────────────────────────────────────
+def _trunc(text: str, max_chars: int = 6000) -> str:
+    """Truncate KB text to prevent context overflow."""
+    return text[:max_chars] + "\n…[truncated for length]" if len(text) > max_chars else text
+
+def _trim_history(messages, max_msgs: int = 6):
+    """Keep only the last max_msgs messages to prevent context window overflow."""
+    recent = messages[-max_msgs:]
+    return [{"role": m["role"], "content": m["content"]} for m in recent]
+
+def _api_error_msg(e) -> str:
+    status = getattr(e, "status_code", "?")
+    return (
+        f"⚠️ The AI provider returned an error (HTTP {status}). "
+        "This usually means the prompt was too long or the API key is invalid. "
+        "Try describing your problem more briefly, or type **'use defaults'** to skip data questions."
+    )
+
 # ── Form processing (module-level so st.rerun() is safe) ───────────────────────
 if send and user_input.strip() and st.session_state.api_key:
         st.session_state.messages.append({"role": "user", "content": user_input})
@@ -850,7 +868,9 @@ if send and user_input.strip() and st.session_state.api_key:
                     ("HEALTH BENEFIT DATA FROM LITERATURE",  kb_mortality),
                 ]:
                     if kb_text and not kb_text.startswith("[KB unavailable"):
-                        kb_section += f"\n\n--- {label} ---\n{kb_text}"
+                        kb_section += f"\n\n--- {label} ---\n{_trunc(kb_text)}"
+                # Cap total KB section to prevent context overflow
+                kb_section = _trunc(kb_section, 16000)
 
                 if kb_section:
                     kb_instruction = f"""
@@ -864,11 +884,12 @@ Cite the paper name when proposing each measure.
                 else:
                     kb_instruction = ""
 
-                resp = client.messages.create(
-                    model="claude-opus-4-6", max_tokens=1500,
-                    messages=[{
-                        "role": "user",
-                        "content": f"""You are an expert in climate adaptation economics.
+                try:
+                    resp = client.messages.create(
+                        model="claude-opus-4-6", max_tokens=1500,
+                        messages=[{
+                            "role": "user",
+                            "content": f"""You are an expert in climate adaptation economics.
 {kb_instruction}
 The user described this climate problem:
 "{user_input}"
@@ -889,8 +910,11 @@ Do two things:
 Then ask: "Which of these measures would you like to include in the analysis?"
 
 Be concise and cite sources."""
-                    }]
-                )
+                        }]
+                    )
+                except (anthropic.BadRequestError, anthropic.APIStatusError) as e:
+                    st.session_state.messages.append({"role": "assistant", "content": _api_error_msg(e)})
+                    st.rerun()
             reply = resp.content[0].text
             st.session_state.messages.append({"role": "assistant", "content": reply})
             st.session_state.specialist_type = detect_specialist_type(st.session_state.problem_text)
@@ -915,7 +939,8 @@ Be concise and cite sources."""
                     ("COST & UNIT VALUES",             kb_params),
                 ]:
                     if kb_text and not kb_text.startswith("[KB unavailable"):
-                        kb_section += f"\n\n--- {label} ---\n{kb_text}"
+                        kb_section += f"\n\n--- {label} ---\n{_trunc(kb_text)}"
+                kb_section = _trunc(kb_section, 12000)
 
                 if kb_section:
                     kb_block = f"""
@@ -931,7 +956,7 @@ Use them to identify:
                 else:
                     kb_block = ""
 
-                history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
+                history = _trim_history(st.session_state.messages)
                 history.append({
                     "role": "user",
                     "content": f"""The user selected these measures: "{user_input}"
@@ -949,7 +974,11 @@ For each selected measure:
 
 If the user has already said "use defaults", skip the questions and confirm you will use literature defaults for everything."""
                 })
-                resp = client.messages.create(model="claude-opus-4-6", max_tokens=1500, messages=history)
+                try:
+                    resp = client.messages.create(model="claude-opus-4-6", max_tokens=1500, messages=history)
+                except (anthropic.BadRequestError, anthropic.APIStatusError) as e:
+                    st.session_state.messages.append({"role": "assistant", "content": _api_error_msg(e)})
+                    st.rerun()
 
             reply = resp.content[0].text
             st.session_state.messages.append({"role": "assistant", "content": reply})
@@ -978,7 +1007,7 @@ If the user has already said "use defaults", skip the questions and confirm you 
 
 LITERATURE PARAMETER VALUES — use these to populate formula fields and their _source fields:
 
-{kb_cba}
+{_trunc(kb_cba)}
 
 ---"""
 
@@ -1009,11 +1038,15 @@ LITERATURE PARAMETER VALUES — use these to populate formula fields and their _
                 return None
 
             with st.spinner("Running Economic Simulations..."):
-                history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
+                history = _trim_history(st.session_state.messages)
                 history.append({"role": "user", "content": prompt_text})
-                resp = client.messages.create(
-                    model="claude-opus-4-6", max_tokens=max_tok, messages=history
-                )
+                try:
+                    resp = client.messages.create(
+                        model="claude-opus-4-6", max_tokens=max_tok, messages=history
+                    )
+                except (anthropic.BadRequestError, anthropic.APIStatusError) as e:
+                    st.session_state.messages.append({"role": "assistant", "content": _api_error_msg(e)})
+                    st.rerun()
 
             raw = resp.content[0].text
             data = _extract_json(raw)
@@ -1028,10 +1061,14 @@ LITERATURE PARAMETER VALUES — use these to populate formula fields and their _
                             "No explanations, no markdown fences. "
                             "Start with { and end with }."}
                     ]
-                    resp2 = client.messages.create(
-                        model="claude-opus-4-6", max_tokens=max_tok, messages=retry_messages
-                    )
-                    data = _extract_json(resp2.content[0].text)
+                    try:
+                        resp2 = client.messages.create(
+                            model="claude-opus-4-6", max_tokens=max_tok, messages=retry_messages
+                        )
+                        data = _extract_json(resp2.content[0].text)
+                    except (anthropic.BadRequestError, anthropic.APIStatusError) as e:
+                        st.session_state.messages.append({"role": "assistant", "content": _api_error_msg(e)})
+                        st.rerun()
 
             if data:
                 st.session_state.analysis_data = data
