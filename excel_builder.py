@@ -3,7 +3,6 @@ import anthropic
 import boto3
 import json
 import re
-from excel_builder import build_excel
 import tempfile, os
 import markdown as md_lib
 
@@ -1235,3 +1234,4 @@ Where: *B* = Annual benefit, *r* = Discount rate, *T* = Time horizon, *CAPEX* = 
 - **World Bank WDI NY.GDP.PCAP.PP.CD.** World Development Indicators. https://data.worldbank.org
 - **Israeli Cancer Registry.** Ministry of Health, State of Israel. https://www.health.gov.il
 """)
+
