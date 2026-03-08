@@ -2,6 +2,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.chart import BarChart, Reference
+from openpyxl.formatting.rule import ColorScaleRule
 
 C_DARK   = "1A1A2E"
 C_MID    = "16213E"
@@ -151,6 +152,258 @@ def _add_legend(ws, start_row, start_col, span=4):
         ws.row_dimensions[r].height = 15
         r += 1
     return r
+
+
+# ── EXECUTIVE SUMMARY SHEET ────────────────────────────────────────────────────
+def _executive_summary(wb, data, rm):
+    """Create Executive Summary sheet with NPV/BCR KPIs as live cross-sheet formulas."""
+    ws = wb.create_sheet("Executive Summary")
+    ws.sheet_view.showGridLines = False
+    ws.tab_color = "1A1A2E"
+
+    measures = data["measures"]
+    n = rm["n"]
+    cur = data.get("currency_unit", "M")
+    currency = data.get("currency", "NIS")
+
+    BCR_ROW   = rm["results_bcr_row"]
+    NPV_ROW   = rm["results_npv_row"]
+    CAPEX_ROW = rm["results_capex_row"]
+
+    col2 = get_column_letter(2)
+    colN = get_column_letter(n + 1)
+
+    # Row 1: title
+    _hdr(ws, 1, 1, f"CLIMATE ADAPTATION CBA — {data['problem_title'].upper()}", sz=16, span=4)
+    # Row 2: summary
+    _hdr(ws, 2, 1, data.get("problem_summary", ""), bg=C_MID, fg="CBD5E1", bold=False, sz=10, wrap=True, span=4)
+    ws.row_dimensions[2].height = 50
+
+    # Row 4: KPI section header
+    _sec(ws, 4, 1, "KEY FINANCIAL RESULTS", span=4)
+
+    # KPI helper: label col1, formula col2 (large font), descriptor col3
+    def _kpi(label, formula, fmt, descriptor, row_num, sz=14, color=C_GREEN):
+        _cell(ws, row_num, 1, label, bold=True)
+        c = ws.cell(row=row_num, column=2, value=formula)
+        c.font = Font(name="Arial", size=sz, bold=True, color=color)
+        c.number_format = fmt
+        c.border = _bd()
+        ws.row_dimensions[row_num].height = sz + 8
+        _cell(ws, row_num, 3, descriptor, color="64748B")
+
+    _kpi("Best BCR (Benefit-Cost Ratio)",
+         f"=MAX('CBA Results'!{col2}{BCR_ROW}:{colN}{BCR_ROW})",
+         "0.00",
+         "BCR > 1.0 = viable  |  BCR > 1.5 = recommended",
+         5, sz=20)
+    _kpi("Best NPV",
+         f"=MAX('CBA Results'!{col2}{NPV_ROW}:{colN}{NPV_ROW})",
+         "#,##0.000",
+         f"{currency} {cur}",
+         6, sz=16)
+    _kpi("Total CAPEX",
+         f"=SUM('CBA Results'!{col2}{CAPEX_ROW}:{colN}{CAPEX_ROW})",
+         "#,##0.000",
+         f"{currency} {cur}",
+         7, sz=14, color=C_DARK)
+    _kpi("Viable Measures (BCR ≥ 1.0)",
+         f"=COUNTIF('CBA Results'!{col2}{BCR_ROW}:{colN}{BCR_ROW},\">=1\")",
+         "0",
+         f"out of {n} measure(s) analysed",
+         8, sz=14, color=C_DARK)
+
+    # Row 10: measures table header
+    _sec(ws, 10, 1, "MEASURES AT A GLANCE", span=4)
+    row = 11
+    _hdr(ws, row, 1, "Measure", bg=C_ACCENT, sz=10)
+    _hdr(ws, row, 2, "BCR", bg=C_ACCENT, sz=10)
+    _hdr(ws, row, 3, f"NPV ({currency} {cur})", bg=C_ACCENT, sz=10)
+    _hdr(ws, row, 4, "Viability", bg=C_ACCENT, sz=10)
+    row += 1
+
+    for mi, m in enumerate(measures):
+        col_letter = get_column_letter(mi + 2)
+        _cell(ws, row, 1, m["name"], bold=True)
+        # BCR formula linking to CBA Results
+        bcr_f = f"='CBA Results'!{col_letter}{BCR_ROW}"
+        c = ws.cell(row=row, column=2, value=bcr_f)
+        c.number_format = "0.00"; c.border = _bd()
+        c.font = Font(name="Arial", size=10, bold=True, color=C_GREEN)
+        # NPV formula
+        npv_f = f"='CBA Results'!{col_letter}{NPV_ROW}"
+        c2 = ws.cell(row=row, column=3, value=npv_f)
+        c2.number_format = "#,##0.000"; c2.border = _bd()
+        c2.font = Font(name="Arial", size=10)
+        # Viability verdict
+        verdict_f = f'=IF(\'CBA Results\'!{col_letter}{BCR_ROW}>=1.5,"Recommended",IF(\'CBA Results\'!{col_letter}{BCR_ROW}>=1,"Viable","Not viable"))'
+        c3 = ws.cell(row=row, column=4, value=verdict_f)
+        c3.font = Font(name="Arial", size=10); c3.border = _bd()
+        row += 1
+
+    row += 1
+    note = ws.cell(row=row, column=1, value="See other sheets for full calculation trace, sensitivity analysis, and methodology. Change any blue cell in Inputs to update all results.")
+    note.font = Font(name="Arial", size=9, color="64748B", italic=True)
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=4)
+
+    _auto_widths(ws)
+
+
+# ── PARAMETER REGISTRY SHEET ───────────────────────────────────────────────────
+def _parameter_registry(wb, data, am):
+    """Create Parameter Registry sheet: full disclosure of all parameters with citations."""
+    ws = wb.create_sheet("Parameter Registry")
+    ws.sheet_view.showGridLines = False
+    ws.tab_color = "64748B"
+
+    cur = data.get("currency", "NIS")
+    cur_unit = data.get("currency_unit", "M")
+    stype = data.get("specialist_type")
+
+    # Column headers
+    _hdr(ws, 1, 1, "PARAMETER REGISTRY — Full Disclosure", sz=13, span=6)
+    _hdr(ws, 2, 1, "All methodology parameters with academic citations. VSL chain values link live to ASSUMPTIONS sheet.", bg=C_MID, fg="CBD5E1", bold=False, sz=9, span=6)
+    row = 4
+
+    cols = ["Parameter", "Value", "Unit", "Type", "Source", "Citation"]
+    for ci, h in enumerate(cols, 1):
+        _hdr(ws, row, ci, h, bg=C_ACCENT, sz=10)
+    row += 1
+
+    def _reg_row(label, value, unit, ptype, source, url="", is_exog=False, is_comp=False, is_endo=False):
+        _cell(ws, row, 1, label)
+        if is_exog:
+            _exog_cell(ws, row, 2, value)
+        elif is_comp:
+            _comp_cell(ws, row, 2, value)
+        elif is_endo:
+            _endo_cell(ws, row, 2, value)
+        else:
+            _cell(ws, row, 2, value)
+        _cell(ws, row, 3, unit)
+        _cell(ws, row, 4, ptype)
+        _cell(ws, row, 5, source)
+        c = ws.cell(row=row, column=6, value=url)
+        if url:
+            c.font = Font(name="Arial", size=9, color="0000FF")
+        c.border = _bd()
+
+    # ── Section 1: Global Parameters ─────────────────────────────────────────
+    _sec(ws, row, 1, "GLOBAL PROJECT PARAMETERS", span=6); row += 1
+    _reg_row("Project Title", data.get("problem_title", ""), "—", "Static", "User input"); row += 1
+    _reg_row("Currency", cur, "—", "Static", "User input"); row += 1
+    _reg_row("Discount Rate", data.get("discount_rate", 0.035), "%", "Global", "Analyst default", is_endo=True); row += 1
+    _reg_row("Time Horizon", data.get("time_horizon", 50), "years", "Global", "Analyst default", is_endo=True); row += 1
+    row += 1
+
+    # ── Section 2: VSL Chain (formula links to ASSUMPTIONS sheet) ────────────
+    _sec(ws, row, 1, "VSL DERIVATION CHAIN (values link live to ASSUMPTIONS sheet)", span=6); row += 1
+
+    vsl_rows = [
+        ("vsl_base",    "OECD Base VSL (2005 USD)",           "USD",    "Exogenous",
+         "Viscusi & Masterman (2017); OECD ENV/WKP(2012)3",
+         "https://doi.org/10.1017/bca.2017.12"),
+        ("cpi_mult",    "CPI Multiplier (2005→2023)",          "ratio",  "Exogenous",
+         "BLS CPI-U Series CUUR0000SA0",
+         "https://www.bls.gov/cpi/"),
+        ("vsl_cpi_adj", "CPI-Adjusted VSL (2023 USD)",         "USD",    "Computed",
+         "= Base VSL × CPI Multiplier", ""),
+        ("ppp_ratio",   "PPP Ratio (Israel/OECD)",             "ratio",  "Exogenous",
+         "World Bank WDI NY.GDP.PCAP.PP.CD",
+         "https://data.worldbank.org"),
+        ("income_el",   "Income Elasticity",                   "—",      "Exogenous",
+         "Standard: 1.0 for developed economies", ""),
+        ("vsl_ppp_adj", "PPP-Adjusted VSL (USD)",              "USD",    "Computed",
+         "= CPI-Adj × PPP × Elasticity", ""),
+        ("fx_rate",     "Exchange Rate (NIS/USD)",             "NIS/USD","Exogenous",
+         "Bank of Israel",
+         "https://www.boi.org.il"),
+        ("vsl_local",   f"VSL in Local Currency ({cur})",      cur,      "Computed",
+         "= PPP-Adj VSL × FX Rate", ""),
+        ("life_exp",    "Life Expectancy Used for VSLY",       "years",  "Exogenous",
+         "UN World Population Prospects", ""),
+        ("vsly_local",  f"VSLY — Value of Statistical Life Year ({cur})", cur, "Computed",
+         "= VSL ÷ Life Expectancy", ""),
+    ]
+    for key, label, unit, ptype, source, url in vsl_rows:
+        am_ref = am.get(key)
+        if am_ref:
+            val = f"={am_ref}"
+            is_c = (ptype == "Computed")
+            _reg_row(label, val, unit, ptype, source, url, is_exog=not is_c, is_comp=is_c)
+        else:
+            _reg_row(label, "—", unit, ptype, source, url)
+        row += 1
+    row += 1
+
+    # ── Section 3: CDD / Heat-Mortality Parameters ────────────────────────────
+    _sec(ws, row, 1, "CDD / HEAT-MORTALITY PARAMETERS", span=6); row += 1
+    cdd = data.get("cdd_params", {})
+    _reg_row("Annual CDD (Cooling Degree Days)",
+             cdd.get("annual_cdd", 735), "CDD/yr", "Exogenous",
+             "Israel Meteorological Service (IMS), 1990–2020 30-yr normal",
+             "https://ims.gov.il", is_exog=True); row += 1
+    _reg_row("CDD Base Temperature",
+             cdd.get("base_temp", 21), "°C", "Exogenous",
+             "IMS / WHO heat health threshold", "", is_exog=True); row += 1
+    _reg_row("Heat-Mortality Factor (HMF)",
+             cdd.get("heat_mortality_factor", 0.00083), "deaths/°C/person", "Exogenous",
+             "Gasparrini et al. (2017) Lancet — Mediterranean cluster",
+             "https://doi.org/10.1016/S0140-6736(17)32302-7", is_exog=True); row += 1
+    _reg_row("Morbidity Multiplier",
+             cdd.get("morbidity_multiplier", 10), "cases/death", "Exogenous",
+             "WHO Europe Heat Health Action Plan (2008)",
+             "https://apps.who.int/iris/handle/10665/107552", is_exog=True); row += 1
+    _reg_row("Skin Cancer Incidence Rate",
+             0.000161, "per person/yr", "Exogenous",
+             "Israeli Cancer Registry; WHO IARC Monograph 100D",
+             "https://www.iarc.fr", is_exog=True); row += 1
+    row += 1
+
+    # ── Section 4: Specialist Parameters (if applicable) ─────────────────────
+    if stype in ("natural_shading", "green_roof"):
+        _sec(ws, row, 1, f"SPECIALIST PARAMETERS — {stype.upper().replace('_', ' ')}", span=6); row += 1
+        sp = data.get("specialist_params", {})
+        if stype == "natural_shading":
+            _reg_row("Heat Reduction Efficiency",
+                     sp.get("heat_reduction_efficiency", 0.5), "fraction", "Exogenous",
+                     "Shashua-Bar & Hoffman (2000) Energy and Buildings", "", is_exog=True); row += 1
+            _reg_row("UV Reduction Factor",
+                     sp.get("uv_reduction_factor", 0.75), "fraction", "Exogenous",
+                     "WHO UV Index guidelines; Nowak et al. (2002) USDA", "", is_exog=True); row += 1
+            _reg_row("Maturity Years (linear ramp)",
+                     sp.get("maturity_years", 8), "years", "Exogenous",
+                     "Nowak et al. (2002) Brooklyn Urban Forest, USDA NE-290", "", is_exog=True); row += 1
+        elif stype == "green_roof":
+            _reg_row("Heat Reduction Efficiency",
+                     sp.get("heat_reduction_efficiency", 0.28), "fraction", "Exogenous",
+                     "Berghage et al. (2009) EPA/600/R-09/026", "", is_exog=True); row += 1
+            _reg_row("Property Value Uplift",
+                     sp.get("property_value_uplift", 0.03), "%", "Exogenous",
+                     "Fuerst & McAllister (2011) Real Estate Economics", "", is_exog=True); row += 1
+            _reg_row("Roof Longevity Extension",
+                     sp.get("roof_longevity_years", 20), "years", "Exogenous",
+                     "Berghage et al. (2009) EPA/600/R-09/026", "", is_exog=True); row += 1
+        row += 1
+
+    # ── Section 5: Per-Measure Inputs ─────────────────────────────────────────
+    _sec(ws, row, 1, "PER-MEASURE INPUTS", span=6); row += 1
+    for m in data.get("measures", []):
+        _cell(ws, row, 1, m.get("name", ""), bold=True)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
+        row += 1
+        _reg_row("  CAPEX",
+                 m.get("capex", 0), f"{cur} {cur_unit}", "Endogenous",
+                 m.get("capex_source", "User/analyst estimate"), "", is_endo=True); row += 1
+        _reg_row("  Annual OPEX",
+                 m.get("annual_opex", 0), f"{cur} {cur_unit}", "Endogenous",
+                 m.get("opex_source", "User/analyst estimate"), "", is_endo=True); row += 1
+        _reg_row("  Lifetime",
+                 m.get("lifetime_years", 50), "years", "Endogenous",
+                 "User/analyst estimate", "", is_endo=True); row += 1
+        row += 1
+
+    _auto_widths(ws)
 
 
 # ── SHEET 0: ASSUMPTIONS ───────────────────────────────────────────────────────
@@ -960,6 +1213,14 @@ def build_excel(data: dict, path: str, assumptions_override: dict = None):
     if data.get("specialist_type") in ("natural_shading", "green_roof"):
         _specialist_detail(wb, data, rm, am)
         _benefit_breakdown(wb, data, rm)
+
+    # Add Executive Summary and Parameter Registry sheets
+    _executive_summary(wb, data, rm)
+    _parameter_registry(wb, data, am)
+
+    # Move Executive Summary to first tab position
+    wb._sheets.insert(0, wb._sheets.pop(wb.sheetnames.index("Executive Summary")))
+
     wb.save(path)
 
 
@@ -1393,6 +1654,7 @@ def _sensitivity(wb, data, rm):
 
     dr_inp = f"Inputs!$B${rm['dr']}"
     row = 4
+    bcr_cf_ranges = []  # collect BCR cell ranges for conditional formatting
 
     for sv in sens_vars:
         sv_name = sv["name"]
@@ -1428,6 +1690,7 @@ def _sensitivity(wb, data, rm):
         for ci, m in enumerate(measures, 2):
             _hdr(ws, row, ci, m["name"], bg=C_ACCENT, sz=10)
         row += 1
+        bcr_row_start = row  # track start of BCR data rows (Low/Base/High)
 
         # Add footnote for benefit-scaling parameters
         sv_key_note = sv_name.split("(")[0].strip().lower()
@@ -1509,7 +1772,19 @@ def _sensitivity(wb, data, rm):
                 if bg: c.fill = PatternFill("solid", fgColor=C_LIGHT)
             row += 1
 
+        # Record BCR range for conditional formatting (Low/Base/High rows, measure columns)
+        bcr_cf_ranges.append((bcr_row_start, row - 1, n))
         row += 3  # blank rows before next parameter
+
+    # Apply red-white-green heatmap to all BCR cells (BCR=1 is white, <1 red, >1 green)
+    for (r_start, r_end, n_cols) in bcr_cf_ranges:
+        range_str = f"{get_column_letter(2)}{r_start}:{get_column_letter(n_cols + 1)}{r_end}"
+        rule = ColorScaleRule(
+            start_type="num", start_value=0,   start_color="DC2626",
+            mid_type="num",   mid_value=1.0,   mid_color="FFFFFF",
+            end_type="num",   end_value=3.0,   end_color="059669",
+        )
+        ws.conditional_formatting.add(range_str, rule)
 
     _sec(ws, row, 1, "INSTRUCTIONS", span=6); row += 1
     for inst in [
