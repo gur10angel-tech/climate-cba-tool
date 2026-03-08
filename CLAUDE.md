@@ -45,11 +45,11 @@ st.set_page_config(page_title="Climate CBA Tool", page_icon="🌍", layout="wide
 
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
-* { font-family: 'Inter', 'Segoe UI', sans-serif; }
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500&display=swap');
+* { font-family: 'IBM Plex Sans', sans-serif; }
 
 .stApp {
-    background: #f8fafc;
+    background: #f4f7f5;
 }
 
 .block-container {
@@ -68,7 +68,7 @@ h1 {
 }
 
 .chat-msg-user {
-    background: #15803d;
+    background: #065f46;
     color: #f9fafb;
     border-radius: 12px 12px 4px 12px;
     padding: 0.75rem 1rem;
@@ -81,7 +81,7 @@ h1 {
 .chat-msg-ai {
     background: #f9fafb;
     color: #022c22;
-    border: 1px solid #e2e8f0;
+    border: 1px solid #d1fae5;
     border-radius: 12px 12px 12px 4px;
     padding: 0.75rem 1rem;
     margin: 0.5rem 0;
@@ -177,7 +177,7 @@ h1 {
     color: #f9fafb !important;
     border: none !important;
     border-radius: 999px !important;
-    font-family: 'Inter', 'Segoe UI', sans-serif !important;
+    font-family: 'IBM Plex Mono', monospace !important;
     font-size: 0.8rem !important;
     padding: 0.55rem 1.5rem !important;
 }
@@ -192,7 +192,7 @@ h1 {
     color: #f9fafb !important;
     border: none !important;
     border-radius: 999px !important;
-    font-family: 'Inter', 'Segoe UI', sans-serif !important;
+    font-family: 'IBM Plex Mono', monospace !important;
     font-size: 0.8rem !important;
     padding: 0.55rem 1.5rem !important;
 }
@@ -205,7 +205,7 @@ h1 {
     color: #f9fafb !important;
     border: none !important;
     border-radius: 10px !important;
-    font-family: 'Inter', 'Segoe UI', sans-serif !important;
+    font-family: 'IBM Plex Mono', monospace !important;
     font-size: 0.85rem !important;
     padding: 0.6rem 1.5rem !important;
     width: 100%;
@@ -226,76 +226,15 @@ h1 {
     display: inline-block;
     background: #bbf7d0;
     color: #14532d;
-    font-family: 'Inter', 'Segoe UI', sans-serif;
+    font-family: 'IBM Plex Mono', monospace;
     font-size: 0.7rem;
     padding: 0.15rem 0.6rem;
     border-radius: 999px;
     margin-bottom: 1rem;
     margin-left: 0.5rem;
 }
-
-.status-badge {
-    font-family: 'Inter', 'Segoe UI', sans-serif;
-}
-
-/* st.metric styling */
-[data-testid="stMetric"] label { color: #475569 !important; font-size: 0.82rem !important; }
-[data-testid="stMetricValue"] { color: #14532d !important; font-size: 1.6rem !important; font-weight: 600 !important; }
-[data-testid="stMetricDelta"] { font-size: 0.78rem !important; }
-
-/* Tab accent */
-.stTabs [data-baseweb="tab-list"] { border-bottom: 2px solid #e2e8f0; }
-.stTabs [aria-selected="true"] { border-bottom: 3px solid #15803d !important; color: #14532d !important; font-weight: 600; }
 </style>
 """, unsafe_allow_html=True)
-
-# ── Sidebar ─────────────────────────────────────────────────────────────────────
-with st.sidebar:
-    st.markdown("## Settings")
-
-    with st.expander("Financial Parameters", expanded=False):
-        st.number_input("Discount Rate (%)", min_value=0.5, max_value=20.0, value=3.5, step=0.5,
-                        key="sidebar_dr", help="Reference value — actual rate is set by Claude from your data.")
-        st.number_input("Time Horizon (years)", min_value=5, max_value=100, value=50, step=5,
-                        key="sidebar_horizon", help="Reference value — actual horizon is set by Claude from your data.")
-        st.selectbox("Currency", ["NIS", "EUR", "USD"], key="sidebar_currency",
-                     help="Reference value — actual currency is set by Claude from your data.")
-
-    with st.expander("Methodology Reference", expanded=False):
-        st.markdown("""
-**VSL Derivation Chain**
-
-| Step | Parameter | Value |
-|------|-----------|-------|
-| 1 | OECD Base VSL (2005 USD) | $3.0M |
-| 2 | × CPI Multiplier (2005→2023) | 1.68 |
-| 3 | × PPP Ratio (Israel/OECD) | 0.89 |
-| 4 | × Income Elasticity | 1.00 |
-| 5 | × FX Rate (NIS/USD) | 3.70 |
-| 6 | = VSL (NIS) | ~16.6M |
-| 7 | ÷ Life Expectancy (years) | 35 |
-| 8 | = VSLY (NIS/yr) | ~474K |
-
-**CDD / Heat-Mortality**
-- CDD baseline (Tel Aviv, 21°C): 735
-- Heat-mortality factor: 0.00083 (Gasparrini 2017)
-- Morbidity multiplier: 10×
-
-**NPV Formula**
-`NPV = PV(Benefits) − PV(Costs)`
-`BCR = PV(Benefits) / PV(Costs)`
-""")
-
-    with st.expander("About", expanded=False):
-        st.markdown("""
-**Climate Adaptation CBA Tool**
-
-Produces a fully auditable Excel cost-benefit model for urban climate adaptation measures.
-
-Every calculation is a live Excel formula traceable to peer-reviewed literature.
-
-**Key sources:** Viscusi & Masterman (2017), Gasparrini et al. (2017) Lancet, WHO Heat Health Action Plan (2008), OECD ENV/WKP(2012)3.
-""")
 
 # ── Specialist keyword detection ────────────────────────────────────────────────
 SHADE_KEYWORDS = [
@@ -688,7 +627,6 @@ for k, v in {
     "aws_key":    _secret("AWS_ACCESS_KEY_ID"),
     "aws_secret": _secret("AWS_SECRET_ACCESS_KEY"),
     "aws_region": _secret("AWS_REGION", "eu-north-1"),
-    "sidebar_dr": 3.5, "sidebar_horizon": 50, "sidebar_currency": "NIS",
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -737,110 +675,39 @@ elif st.session_state.specialist_type == "green_roof":
     badge_html += '<div class="specialist-badge">🏠 Green Roof Mode</div>'
 st.markdown(badge_html, unsafe_allow_html=True)
 
-# ── Tabs ───────────────────────────────────────────────────────────────────────
-tab_analysis, tab_tables, tab_method = st.tabs(["Analysis", "Detailed Tables", "Methodology"])
+# ── Chat display ───────────────────────────────────────────────────────────────
+chat_container = st.container()
+with chat_container:
+    if not st.session_state.messages:
+        st.markdown("""
+        <div class="chat-msg-ai">
+        Hello! I'm here to help you build a cost-benefit analysis for climate adaptation measures.<br><br>
+        <b>Describe the climate problem</b> you're working on — include location, population, climate hazard, and any economic context you have.<br><br>
+        <i>Tip: mention "shaded boulevard", "urban trees", or "green roof" to activate specialist VSL/CDD methodology.</i>
+        </div>
+        """, unsafe_allow_html=True)
+    for msg in st.session_state.messages:
+        if msg["role"] == "user":
+            st.markdown(f'<div class="chat-msg-user">{msg["content"]}</div>', unsafe_allow_html=True)
+        else:
+            html_content = md_lib.markdown(msg["content"], extensions=["tables", "nl2br"])
+            st.markdown(f'<div class="chat-msg-ai">{html_content}</div>', unsafe_allow_html=True)
 
-with tab_analysis:
-    # ── Chat display ──────────────────────────────────────────────────────────
-    chat_container = st.container()
-    with chat_container:
-        if not st.session_state.messages:
-            st.markdown("""
-            <div class="chat-msg-ai">
-            Hello! I'm here to help you build a cost-benefit analysis for climate adaptation measures.<br><br>
-            <b>Describe the climate problem</b> you're working on — include location, population, climate hazard, and any economic context you have.<br><br>
-            <i>Tip: mention "shaded boulevard", "urban trees", or "green roof" to activate specialist VSL/CDD methodology.</i>
-            </div>
-            """, unsafe_allow_html=True)
-        for msg in st.session_state.messages:
-            if msg["role"] == "user":
-                st.markdown(f'<div class="chat-msg-user">{msg["content"]}</div>', unsafe_allow_html=True)
-            else:
-                html_content = md_lib.markdown(msg["content"], extensions=["tables", "nl2br"])
-                st.markdown(f'<div class="chat-msg-ai">{html_content}</div>', unsafe_allow_html=True)
-
-    # ── Input form ────────────────────────────────────────────────────────────
-    if st.session_state.stage != "done":
-        with st.form("chat_form", clear_on_submit=True):
-            col1, col2 = st.columns([6, 1])
-            with col1:
-                user_input = st.text_input(
-                    "",
-                    placeholder="Type your message…  (Enter to send)",
-                    label_visibility="collapsed",
-                    key="user_input",
-                )
-            with col2:
-                send = st.form_submit_button("Send →", use_container_width=True)
-    else:
-        send = False
-        user_input = ""
-
-    # ── Excel download (shown inside Analysis tab when done) ──────────────────
-    if st.session_state.stage == "done" and st.session_state.analysis_data:
-        st.markdown("---")
-        col_l, col_r = st.columns([1, 2])
-        with col_l:
-            with st.spinner("Building Excel..."):
-                tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
-                build_excel(st.session_state.analysis_data, tmp.name)
-                with open(tmp.name, "rb") as f:
-                    excel_bytes = f.read()
-                os.unlink(tmp.name)
-
-            title = st.session_state.analysis_data.get("problem_title", "CBA").replace(" ", "_")
-            st.download_button(
-                "⬇ Download Excel CBA Model",
-                excel_bytes,
-                file_name=f"CBA_{title}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+# ── Input ──────────────────────────────────────────────────────────────────────
+if st.session_state.stage != "done":
+    with st.form("chat_form", clear_on_submit=True):
+        col1, col2 = st.columns([6, 1])
+        with col1:
+            user_input = st.text_input(
+                "",
+                placeholder="Type your message…  (Enter to send)",
+                label_visibility="collapsed",
+                key="user_input",
             )
-        with col_r:
-            st.markdown("**Your Excel file includes:**")
-            bullets = (
-                "- 📋 Executive Summary (first tab, NPV & BCR dashboard)\n"
-                "- 📋 Inputs & Assumptions sheet (blue = editable)\n"
-                "- 📊 CBA Results with NPV & BCR\n"
-                "- 📈 Sensitivity Analysis with conditional formatting\n"
-                "- 📁 Summary sheet\n"
-                "- 📚 Parameter Registry (all 55+ parameters with citations)"
-            )
-            if st.session_state.analysis_data.get("specialist_type"):
-                bullets += "\n- 🔬 Specialist Detail (VSL derivation, year-by-year benefit table)"
-            st.markdown(bullets)
+        with col2:
+            send = st.form_submit_button("Send →", use_container_width=True)
 
-        if st.button("🔄 Start New Analysis"):
-            for k in ["messages", "stage", "analysis_data", "problem_text", "specialist_type"]:
-                if k == "messages":
-                    st.session_state[k] = []
-                elif k == "stage":
-                    st.session_state[k] = "problem"
-                elif k == "specialist_type":
-                    st.session_state[k] = None
-                else:
-                    st.session_state[k] = None if k == "analysis_data" else ""
-            st.rerun()
-
-# ── Helpers for safe API calls ─────────────────────────────────────────────────
-def _trunc(text: str, max_chars: int = 6000) -> str:
-    """Truncate KB text to prevent context overflow."""
-    return text[:max_chars] + "\n…[truncated for length]" if len(text) > max_chars else text
-
-def _trim_history(messages, max_msgs: int = 6):
-    """Keep only the last max_msgs messages to prevent context window overflow."""
-    recent = messages[-max_msgs:]
-    return [{"role": m["role"], "content": m["content"]} for m in recent]
-
-def _api_error_msg(e) -> str:
-    status = getattr(e, "status_code", "?")
-    return (
-        f"⚠️ The AI provider returned an error (HTTP {status}). "
-        "This usually means the prompt was too long or the API key is invalid. "
-        "Try describing your problem more briefly, or type **'use defaults'** to skip data questions."
-    )
-
-# ── Form processing (module-level so st.rerun() is safe) ───────────────────────
-if send and user_input.strip() and st.session_state.api_key:
+    if send and user_input.strip() and st.session_state.api_key:
         st.session_state.messages.append({"role": "user", "content": user_input})
         _key = st.session_state.api_key.strip().encode("ascii", errors="ignore").decode("ascii")
         client = anthropic.Anthropic(api_key=_key)
@@ -868,9 +735,7 @@ if send and user_input.strip() and st.session_state.api_key:
                     ("HEALTH BENEFIT DATA FROM LITERATURE",  kb_mortality),
                 ]:
                     if kb_text and not kb_text.startswith("[KB unavailable"):
-                        kb_section += f"\n\n--- {label} ---\n{_trunc(kb_text)}"
-                # Cap total KB section to prevent context overflow
-                kb_section = _trunc(kb_section, 16000)
+                        kb_section += f"\n\n--- {label} ---\n{kb_text}"
 
                 if kb_section:
                     kb_instruction = f"""
@@ -884,12 +749,11 @@ Cite the paper name when proposing each measure.
                 else:
                     kb_instruction = ""
 
-                try:
-                    resp = client.messages.create(
-                        model="claude-opus-4-6", max_tokens=1500,
-                        messages=[{
-                            "role": "user",
-                            "content": f"""You are an expert in climate adaptation economics.
+                resp = client.messages.create(
+                    model="claude-opus-4-6", max_tokens=1500,
+                    messages=[{
+                        "role": "user",
+                        "content": f"""You are an expert in climate adaptation economics.
 {kb_instruction}
 The user described this climate problem:
 "{user_input}"
@@ -910,11 +774,8 @@ Do two things:
 Then ask: "Which of these measures would you like to include in the analysis?"
 
 Be concise and cite sources."""
-                        }]
-                    )
-                except (anthropic.BadRequestError, anthropic.APIStatusError) as e:
-                    st.session_state.messages.append({"role": "assistant", "content": _api_error_msg(e)})
-                    st.rerun()
+                    }]
+                )
             reply = resp.content[0].text
             st.session_state.messages.append({"role": "assistant", "content": reply})
             st.session_state.specialist_type = detect_specialist_type(st.session_state.problem_text)
@@ -939,8 +800,7 @@ Be concise and cite sources."""
                     ("COST & UNIT VALUES",             kb_params),
                 ]:
                     if kb_text and not kb_text.startswith("[KB unavailable"):
-                        kb_section += f"\n\n--- {label} ---\n{_trunc(kb_text)}"
-                kb_section = _trunc(kb_section, 12000)
+                        kb_section += f"\n\n--- {label} ---\n{kb_text}"
 
                 if kb_section:
                     kb_block = f"""
@@ -956,7 +816,7 @@ Use them to identify:
                 else:
                     kb_block = ""
 
-                history = _trim_history(st.session_state.messages)
+                history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
                 history.append({
                     "role": "user",
                     "content": f"""The user selected these measures: "{user_input}"
@@ -974,11 +834,7 @@ For each selected measure:
 
 If the user has already said "use defaults", skip the questions and confirm you will use literature defaults for everything."""
                 })
-                try:
-                    resp = client.messages.create(model="claude-opus-4-6", max_tokens=1500, messages=history)
-                except (anthropic.BadRequestError, anthropic.APIStatusError) as e:
-                    st.session_state.messages.append({"role": "assistant", "content": _api_error_msg(e)})
-                    st.rerun()
+                resp = client.messages.create(model="claude-opus-4-6", max_tokens=1500, messages=history)
 
             reply = resp.content[0].text
             st.session_state.messages.append({"role": "assistant", "content": reply})
@@ -1007,7 +863,7 @@ If the user has already said "use defaults", skip the questions and confirm you 
 
 LITERATURE PARAMETER VALUES — use these to populate formula fields and their _source fields:
 
-{_trunc(kb_cba)}
+{kb_cba}
 
 ---"""
 
@@ -1037,16 +893,12 @@ LITERATURE PARAMETER VALUES — use these to populate formula fields and their _
                                     break
                 return None
 
-            with st.spinner("Running Economic Simulations..."):
-                history = _trim_history(st.session_state.messages)
+            with st.spinner("Building analysis from literature + your data..."):
+                history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
                 history.append({"role": "user", "content": prompt_text})
-                try:
-                    resp = client.messages.create(
-                        model="claude-opus-4-6", max_tokens=max_tok, messages=history
-                    )
-                except (anthropic.BadRequestError, anthropic.APIStatusError) as e:
-                    st.session_state.messages.append({"role": "assistant", "content": _api_error_msg(e)})
-                    st.rerun()
+                resp = client.messages.create(
+                    model="claude-opus-4-6", max_tokens=max_tok, messages=history
+                )
 
             raw = resp.content[0].text
             data = _extract_json(raw)
@@ -1061,14 +913,10 @@ LITERATURE PARAMETER VALUES — use these to populate formula fields and their _
                             "No explanations, no markdown fences. "
                             "Start with { and end with }."}
                     ]
-                    try:
-                        resp2 = client.messages.create(
-                            model="claude-opus-4-6", max_tokens=max_tok, messages=retry_messages
-                        )
-                        data = _extract_json(resp2.content[0].text)
-                    except (anthropic.BadRequestError, anthropic.APIStatusError) as e:
-                        st.session_state.messages.append({"role": "assistant", "content": _api_error_msg(e)})
-                        st.rerun()
+                    resp2 = client.messages.create(
+                        model="claude-opus-4-6", max_tokens=max_tok, messages=retry_messages
+                    )
+                    data = _extract_json(resp2.content[0].text)
 
             if data:
                 st.session_state.analysis_data = data
@@ -1106,132 +954,45 @@ LITERATURE PARAMETER VALUES — use these to populate formula fields and their _
                 })
             st.rerun()
 
-# ── Detailed Tables tab ────────────────────────────────────────────────────────
-with tab_tables:
-    data_snapshot = st.session_state.analysis_data
-    if data_snapshot and st.session_state.stage == "done":
-        measures = data_snapshot.get("measures", [])
-        cur = data_snapshot.get("currency_unit", "M")
-        dr = data_snapshot.get("discount_rate", 0.035)
-        horizon = data_snapshot.get("time_horizon", 50)
+# ── Excel download ─────────────────────────────────────────────────────────────
+if st.session_state.stage == "done" and st.session_state.analysis_data:
+    st.markdown("---")
+    col_l, col_r = st.columns([1, 2])
+    with col_l:
+        with st.spinner("Building Excel..."):
+            tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
+            build_excel(st.session_state.analysis_data, tmp.name)
+            with open(tmp.name, "rb") as f:
+                excel_bytes = f.read()
+            os.unlink(tmp.name)
 
-        # Metric cards — Python approximations for UI display only (not written to Excel)
-        total_capex = sum(m.get("capex", 0) for m in measures)
-        best_bcr = 0.0
-        best_npv = 0.0
-        for m in measures:
-            capex = m.get("capex", 0)
-            opex = m.get("annual_opex", 0)
-            benefit = m.get("annual_benefit", m.get("benefit_components", [{}])[0].get("value", 0) if m.get("benefit_components") else 0)
-            life = m.get("lifetime_years", horizon)
-            if dr > 0 and capex > 0:
-                pv_ben = benefit / dr * (1 - (1 + dr) ** (-life)) if dr > 0 else benefit * life
-                pv_cost = capex + opex / dr * (1 - (1 + dr) ** (-life)) if dr > 0 else capex + opex * life
-                bcr = pv_ben / pv_cost if pv_cost > 0 else 0
-                npv = pv_ben - pv_cost
-                if bcr > best_bcr:
-                    best_bcr = bcr
-                    best_npv = npv
+        title = st.session_state.analysis_data.get("problem_title", "CBA").replace(" ", "_")
+        st.download_button(
+            "⬇ Download Excel CBA Model",
+            excel_bytes,
+            file_name=f"CBA_{title}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    with col_r:
+        st.markdown("**Your Excel file includes:**")
+        bullets = (
+            "- 📋 Inputs & Assumptions sheet (blue = editable)\n"
+            "- 📊 CBA Results with NPV & BCR\n"
+            "- 📈 Sensitivity Analysis (4-pillar)\n"
+            "- 📁 Summary sheet"
+        )
+        if st.session_state.analysis_data.get("specialist_type"):
+            bullets += "\n- 🔬 Specialist Detail (VSL derivation, year-by-year benefit table)"
+        st.markdown(bullets)
 
-        st.subheader("Key Metrics (Approximate — see Excel for exact formula-based values)")
-        mc1, mc2, mc3 = st.columns(3)
-        mc1.metric("Best BCR", f"{best_bcr:.2f}", delta="≥1.0 = viable" if best_bcr >= 1.0 else "< 1.0 not viable")
-        mc2.metric("Best NPV", f"{best_npv:,.1f} {cur}")
-        mc3.metric("Total CAPEX", f"{total_capex:,.1f} {cur}")
-
-        st.divider()
-
-        # Measures dataframe
-        st.subheader("Measures Summary")
-        rows = []
-        for m in measures:
-            rows.append({
-                "Measure": m.get("name", ""),
-                "CAPEX": m.get("capex", ""),
-                "Annual OPEX": m.get("annual_opex", ""),
-                "Lifetime (yr)": m.get("lifetime_years", ""),
-                "Feasibility": m.get("feasibility", ""),
-                "Uncertainty": m.get("uncertainty", ""),
-            })
-        st.dataframe(rows, use_container_width=True)
-
-        # Sensitivity vars
-        svars = data_snapshot.get("sensitivity_vars", [])
-        if svars:
-            st.subheader("Sensitivity Variables")
-            st.dataframe(svars, use_container_width=True)
-
-        # Key assumptions
-        kassumptions = data_snapshot.get("key_assumptions", [])
-        if kassumptions:
-            st.subheader("Key Assumptions")
-            for ka in kassumptions:
-                if isinstance(ka, dict):
-                    st.markdown(f"- **{ka.get('text','')}** — *{ka.get('source','')}*")
-                else:
-                    st.markdown(f"- {ka}")
-    else:
-        st.info("Complete the analysis in the **Analysis** tab first to see results here.")
-
-# ── Methodology tab ─────────────────────────────────────────────────────────────
-with tab_method:
-    st.subheader("VSL Derivation Chain")
-    st.markdown("""
-| Step | Parameter | Default Value | Source |
-|------|-----------|---------------|--------|
-| 1 | OECD Base VSL (2005 USD) | $3,000,000 | Viscusi & Masterman (2017); OECD ENV/WKP(2012)3 |
-| 2 | × CPI Multiplier (2005→2023) | 1.68 | BLS CPI-U Series CUUR0000SA0 |
-| 3 | = CPI-Adjusted VSL (2023 USD) | $5,040,000 | Computed |
-| 4 | × PPP Ratio (Israel/OECD) | 0.89 | World Bank WDI NY.GDP.PCAP.PP.CD |
-| 5 | × Income Elasticity | 1.00 | Standard for developed economies |
-| 6 | = PPP-Adjusted VSL (USD) | $4,485,600 | Computed |
-| 7 | × FX Rate (NIS/USD) | 3.70 | Bank of Israel |
-| 8 | = VSL in NIS | ~16,597,000 | Computed |
-| 9 | ÷ Life Expectancy (yr) | 35 | UN WPP |
-| 10 | = VSLY (NIS/yr) | ~474,200 | Computed |
-
-*All steps are live Excel formulas — change any input cell and the entire chain updates.*
-""")
-
-    st.divider()
-    st.subheader("CDD / Heat-Mortality Formula")
-    st.markdown("""
-**Annual Avoided Deaths** = Population × Mortality Rate × Heat-Mortality Factor × Heat Reduction Efficiency
-
-**Annual Avoided Mortality Benefit (NIS M)** = Avoided Deaths × VSL / 1,000,000
-
-| Parameter | Value | Source |
-|-----------|-------|--------|
-| Heat-Mortality Factor | 0.00083 deaths/°C/person | Gasparrini et al. (2017) Lancet, Mediterranean cluster |
-| Morbidity Multiplier | 10× | WHO Europe Heat Health Action Plan (2008) |
-| CDD Baseline (Tel Aviv) | 735 CDD/yr (21°C base) | Israel Meteorological Service, 1990–2020 |
-| Skin Cancer Incidence | 0.000161/person/yr | Israeli Cancer Registry; WHO IARC Monograph 100D |
-""")
-
-    st.divider()
-    st.subheader("NPV / BCR Formulas")
-    st.markdown(r"""
-$$\text{NPV} = \sum_{t=1}^{T} \frac{B_t - C_t}{(1+r)^t}$$
-
-$$\text{BCR} = \frac{PV(\text{Benefits})}{PV(\text{Costs})} = \frac{B/r \cdot (1-(1+r)^{-T})}{CAPEX + OPEX/r \cdot (1-(1+r)^{-T})}$$
-
-Where: *B* = Annual benefit, *r* = Discount rate, *T* = Time horizon, *CAPEX* = Capital cost, *OPEX* = Annual operating cost.
-
-**BCR > 1.0** = project generates more benefit than cost → viable
-**BCR > 1.5** = recommended threshold for public infrastructure
-""")
-
-    st.divider()
-    st.subheader("Key Citations")
-    st.markdown("""
-- **Viscusi, W.K. & Masterman, C.W. (2017).** Income Elasticities and Global Values of a Statistical Life. *Journal of Benefit-Cost Analysis*, 8(2), 226–250.
-- **Gasparrini, A. et al. (2017).** Projections of temperature-related excess mortality under climate change scenarios. *The Lancet Planetary Health*, 1(9), e360–e367.
-- **OECD (2012).** Mortality Risk Valuation in Environment, Health and Transport Policies. OECD Publishing. ENV/WKP(2012)3.
-- **WHO Europe (2008).** Heat–health action plans. WHO Regional Office for Europe, Copenhagen.
-- **Shashua-Bar, L. & Hoffman, M.E. (2000).** Vegetation as a climatic component in the design of an urban street. *Energy and Buildings*, 31(3), 221–235.
-- **Nowak, D.J. et al. (2002).** Brooklyn's Urban Forest. General Technical Report NE-290. USDA Forest Service.
-- **Berghage, R. et al. (2009).** Green Roofs for Stormwater Runoff Control. EPA/600/R-09/026.
-- **BLS CPI-U Series CUUR0000SA0.** U.S. Bureau of Labor Statistics. https://www.bls.gov/cpi/
-- **World Bank WDI NY.GDP.PCAP.PP.CD.** World Development Indicators. https://data.worldbank.org
-- **Israeli Cancer Registry.** Ministry of Health, State of Israel. https://www.health.gov.il
-""")
+    if st.button("🔄 Start New Analysis"):
+        for k in ["messages", "stage", "analysis_data", "problem_text", "specialist_type"]:
+            if k == "messages":
+                st.session_state[k] = []
+            elif k == "stage":
+                st.session_state[k] = "problem"
+            elif k == "specialist_type":
+                st.session_state[k] = None
+            else:
+                st.session_state[k] = None if k == "analysis_data" else ""
+        st.rerun()
