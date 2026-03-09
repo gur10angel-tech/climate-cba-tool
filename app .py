@@ -255,11 +255,11 @@ with st.sidebar:
 
     with st.expander("Financial Parameters", expanded=False):
         st.number_input("Discount Rate (%)", min_value=0.5, max_value=20.0, value=3.5, step=0.5,
-                        key="sidebar_dr", help="Reference value — actual rate is set by Claude from your data.")
+                        key="sidebar_dr", help="This value will be used in all calculations.")
         st.number_input("Time Horizon (years)", min_value=5, max_value=100, value=50, step=5,
-                        key="sidebar_horizon", help="Reference value — actual horizon is set by Claude from your data.")
+                        key="sidebar_horizon", help="This value will be used in all calculations.")
         st.selectbox("Currency", ["NIS", "EUR", "USD"], key="sidebar_currency",
-                     help="Reference value — actual currency is set by Claude from your data.")
+                     help="This value will be used in all calculations.")
 
     with st.expander("Methodology Reference", expanded=False):
         st.markdown("""
@@ -294,7 +294,10 @@ Produces a fully auditable Excel cost-benefit model for urban climate adaptation
 
 Every calculation is a live Excel formula traceable to peer-reviewed literature.
 
-**Key sources:** Viscusi & Masterman (2017), Gasparrini et al. (2017) Lancet, WHO Heat Health Action Plan (2008), OECD ENV/WKP(2012)3.
+**Creators**
+- Dan Brodsky
+- Gur Angel
+- Nir Becker
 """)
 
 # ── Specialist keyword detection ────────────────────────────────────────────────
@@ -331,8 +334,22 @@ GENERIC_DATA_PROMPT = """User provided: "USER_INPUT_PLACEHOLDER"
 OUTPUT ONLY valid JSON. No text before or after. Start with { and end with }.
 
 ARCHITECTURE RULE: Every benefit component MUST use a typed formula — not a single pre-computed number.
-Use type "avoided_mortality", "energy_savings", "morbidity_savings", or "property_value_uplift".
-Use "generic_annual" ONLY as a last resort when none of the above apply.
+Use type "avoided_mortality", "energy_savings", "morbidity_savings", or "property_value_uplift" for primary benefits.
+Use "generic_annual" for indirect/co-benefits (carbon sequestration, runoff, air quality, habitat, noise reduction, etc.).
+
+BENEFIT COVERAGE REQUIREMENT — MANDATORY:
+Every adaptation measure has BOTH direct and indirect benefits. You MUST include ALL that apply:
+  Direct:   avoided_mortality, morbidity_savings, energy_savings, property_value_uplift
+  Indirect: carbon sequestration (generic_annual), stormwater/runoff savings (generic_annual),
+            air quality / PM2.5 reduction (generic_annual), habitat/biodiversity value (generic_annual),
+            noise reduction (generic_annual, if relevant)
+Do NOT limit yourself to 2-3 components. A typical urban climate measure should have 4-8 benefit_components.
+For each indirect benefit provide: "annual_value_currency_millions" (number) and cite a literature source.
+
+VERIFICATION STEP — before finalising the JSON:
+  1. List every benefit category identified for this measure.
+  2. Confirm each one has a corresponding entry in "benefit_components" with a numeric value.
+  3. Every benefit_component is automatically summed into the Total Annual Benefit — ensure none are missing.
 
 ═══════════════════════════════════════════════════════════════
 AVOIDED MORTALITY — PARAMETER GUIDE (read carefully)
@@ -365,6 +382,7 @@ WORKED EXAMPLE (realistic for Tel Aviv, 30,000 elderly 75+):
 For "energy_savings" provide: area_m2, energy_reduction_kwh_m2, electricity_tariff
 For "morbidity_savings" provide: cases_avoided_per_year, hospitalization_cost, avg_length_of_stay_days
 For "property_value_uplift" provide: affected_area_m2, property_value_per_m2, uplift_fraction
+For "generic_annual" (indirect/co-benefits) provide: annual_value_currency_millions, annual_value_source
 
 Every numeric parameter needs a "_source" field: e.g. "vsl_source": "OECD 2012 ENV/WKP median"
 Use literature defaults for any parameter the user did not provide.
@@ -998,6 +1016,19 @@ If the user has already said "use defaults", skip the questions and confirm you 
                 prompt_text = GENERIC_DATA_PROMPT.replace("USER_INPUT_PLACEHOLDER", user_input)
                 max_tok = 6000
 
+            # Inject user-specified financial parameters — these override any Claude defaults
+            _dr_pct  = st.session_state.get("sidebar_dr", 3.5)
+            _horizon = int(st.session_state.get("sidebar_horizon", 50))
+            _currency = st.session_state.get("sidebar_currency", "NIS")
+            _param_block = (
+                f'MANDATORY USER-SPECIFIED FINANCIAL PARAMETERS — use these exact values in the JSON output:\n'
+                f'  "discount_rate": {_dr_pct / 100},\n'
+                f'  "time_horizon": {_horizon},\n'
+                f'  "currency": "{_currency}"\n'
+                f'Do not change or re-estimate these values. The user has already set them.\n\n'
+            )
+            prompt_text = _param_block + prompt_text
+
             # Query KB for formula parameters from literature
             kb_cba = query_bedrock_kb(
                 f"VSL mortality rate heat reduction efficiency cost per unit {st.session_state.problem_text}"
@@ -1175,6 +1206,23 @@ with tab_tables:
 
 # ── Methodology tab ─────────────────────────────────────────────────────────────
 with tab_method:
+    st.subheader("How It Works")
+    st.markdown("""
+**Step 1 — Data Acquisition (User Input)**
+You describe the climate problem: location, population size, climate hazard, and any known economic context. The more detail you provide, the more precise the model.
+
+**Step 2 — Knowledge Base Query (RAG via Amazon Bedrock)**
+The system queries a curated database of peer-reviewed urban heat island (UHI) and climate adaptation papers using Retrieval-Augmented Generation (RAG). This surfaces relevant adaptation measures, cost ranges, and benefit evidence directly from the literature — not from general AI knowledge.
+
+**Step 3 — Supplemental Literature Synthesis**
+Claude identifies applicable benefit formulas, parameter defaults, and source citations from the retrieved papers. It distinguishes explicitly between what comes from the literature and what requires local data from the user.
+
+**Step 4 — Dynamic Formula Generation & Economic Modeling**
+A structured economic model is generated covering all direct and indirect benefit streams (avoided mortality, morbidity, energy savings, carbon sequestration, runoff reduction, air quality, habitat value, and more). Every parameter traces to a literature source. The model is exported as a fully formula-driven Excel CBA workbook with NPV, BCR, and Sensitivity Analysis sheets — every cell is a live formula, not a hard-coded number.
+""")
+
+    st.divider()
+    st.subheader("Technical Reference")
     st.subheader("VSL Derivation Chain")
     st.markdown("""
 | Step | Parameter | Default Value | Source |

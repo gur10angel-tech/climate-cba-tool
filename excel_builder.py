@@ -1582,7 +1582,7 @@ def _results(wb, data, rm):
     for ci in range(2, n+2):
         col = get_column_letter(ci)
         c = ws.cell(row=row, column=ci,
-                    value=f'=IF({col}{BCR_ROW}>=1,"✓ Yes","✗ No")')
+                    value=f'=IF({col}{BCR_ROW}>=1,"Yes","No")')
         c.font = Font(name="Arial", color=BLACK, size=10)
         c.border = _bd()
         c.alignment = Alignment(horizontal="center")
@@ -1849,7 +1849,7 @@ def _summary(wb, data, rm):
 
         bcr_here = f"D{row}"
         c = ws.cell(row=row, column=5,
-                    value=f'=IF({bcr_here}>=1.5,"✓ Recommended",IF({bcr_here}>=1.0,"○ Consider","✗ Review"))')
+                    value=f'=IF({bcr_here}>=1.5,"Recommended",IF({bcr_here}>=1.0,"Consider","Review"))')
         c.font = Font(name="Arial", color=BLACK, size=10)
         c.border = _bd(); c.alignment = Alignment(horizontal="center")
         row += 1
@@ -2887,10 +2887,10 @@ def _benefit_detail(wb, data, rm=None):
         C_WARN_BG = "FEF2F2"
         C_WARN_FG = "991B1B"
         warn_label = ws.cell(row=row, column=1,
-            value=(f'=IF(B{r_bcr}>15,"⚠️ BCR EXCEEDS 15 — REVIEW PARAMETERS: '
-                   f'Check (a) VSL is in full EUR units (e.g. 3800000 not 3.8), '
-                   f'(b) population_at_risk is not over-estimated, '
-                   f'(c) heat_mortality_factor is a fraction (0.06–0.15), not a rate per person","")'))
+            value=(f'=IF(B{r_bcr}>15,"WARNING: BCR > 15 - review parameters: '
+                   f'(a) VSL must be in full units e.g. 3800000 not 3.8, '
+                   f'(b) population_at_risk should not be over-estimated, '
+                   f'(c) heat_mortality_factor is a fraction 0.02-0.10 not a per-person rate","")'))
         warn_label.font  = Font(name="Arial", bold=True, color=C_WARN_FG, size=9)
         warn_label.fill  = PatternFill("solid", fgColor=C_WARN_BG)
         warn_label.border= _bd()
@@ -2944,7 +2944,7 @@ def _benefit_detail(wb, data, rm=None):
             f"={sr['pv_cost_ref']}",
             f"={sr['npv_ref']}",
             f"={sr['bcr_ref']}",
-            f'=IF({bcr_ref}>=1.5,"✓ Recommended",IF({bcr_ref}>=1.0,"○ Consider","✗ Review"))',
+            f'=IF({bcr_ref}>=1.5,"Recommended",IF({bcr_ref}>=1.0,"Consider","Review"))',
         ]
         fmts = [None, None, "#,##0.00","#,##0.00","#,##0.00","#,##0.00","0.00", None]
         for ci, (v, fmt) in enumerate(zip(vals, fmts), 1):
