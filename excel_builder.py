@@ -3,6 +3,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.chart import BarChart, Reference
 from openpyxl.formatting.rule import ColorScaleRule
+from openpyxl.comments import Comment
 
 C_DARK   = "1A1A2E"
 C_MID    = "16213E"
@@ -155,9 +156,9 @@ def _add_legend(ws, start_row, start_col, span=4):
 
 
 # ── EXECUTIVE SUMMARY SHEET ────────────────────────────────────────────────────
-def _executive_summary(wb, data, rm):
+def _executive_summary(wb, data, rm, am=None, audit_acknowledged: bool = False):
     """Create Executive Summary sheet with NPV/BCR KPIs as live cross-sheet formulas."""
-    ws = wb.create_sheet("Executive Summary")
+    ws = wb.create_sheet("Executive Dashboard")
     ws.sheet_view.showGridLines = False
     ws.tab_color = "1A1A2E"
 
@@ -178,6 +179,18 @@ def _executive_summary(wb, data, rm):
     # Row 2: summary
     _hdr(ws, 2, 1, data.get("problem_summary", ""), bg=C_MID, fg="CBD5E1", bold=False, sz=10, wrap=True, span=4)
     ws.row_dimensions[2].height = 50
+
+    # Row 3: audit warning banner (only when downloaded with unverified parameters)
+    if audit_acknowledged:
+        warn_cell = ws.cell(row=3, column=1,
+            value="\u26a0  UNVERIFIED PARAMETERS \u2014 This model was downloaded with methodology "
+                  "audit errors present. Review audit findings before use in policy documents.")
+        warn_cell.font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+        warn_cell.fill = PatternFill("solid", fgColor=C_RED)
+        warn_cell.alignment = Alignment(wrap_text=True, vertical="center")
+        warn_cell.border = _bd()
+        ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=4)
+        ws.row_dimensions[3].height = 36
 
     # Row 4: KPI section header
     _sec(ws, 4, 1, "KEY FINANCIAL RESULTS", span=4)
@@ -213,6 +226,15 @@ def _executive_summary(wb, data, rm):
          f"out of {n} measure(s) analysed",
          8, sz=14, color=C_DARK)
 
+    # Row 9: Climate scenario (live formula link to ASSUMPTIONS if am available)
+    _cell(ws, 9, 1, "Climate Scenario", bold=True)
+    if am and am.get("scenario_name"):
+        c_scen = ws.cell(row=9, column=2, value=f"={am['scenario_name']}")
+        c_scen.font = Font(name="Arial", size=11, bold=True, color=C_GREEN)
+        c_scen.border = _bd()
+    else:
+        _cell(ws, 9, 2, data.get("scenario_name", "Stable (Baseline)"))
+
     # Row 10: measures table header
     _sec(ws, 10, 1, "MEASURES AT A GLANCE", span=4)
     row = 11
@@ -245,6 +267,34 @@ def _executive_summary(wb, data, rm):
     note = ws.cell(row=row, column=1, value="See other sheets for full calculation trace, sensitivity analysis, and methodology. Change any blue cell in Inputs to update all results.")
     note.font = Font(name="Arial", size=9, color="64748B", italic=True)
     ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=4)
+    row += 2
+
+    # ── PORTFOLIO OVERVIEW (absorbed from Summary sheet) ─────────────────────
+    _sec(ws, row, 1, "PORTFOLIO OVERVIEW", span=4); row += 1
+
+    _cell(ws, row, 1, "Viable Measures (BCR \u2265 1.0)", bold=True)
+    viable_cell = ws.cell(row=row, column=2,
+        value=f"=COUNTIF('CBA Results'!{col2}{BCR_ROW}:{colN}{BCR_ROW},\">=1\")")
+    viable_cell.font = Font(name="Arial", size=11, bold=True, color=C_GREEN)
+    viable_cell.number_format = "0"
+    viable_cell.border = _bd()
+    row += 1
+
+    _cell(ws, row, 1, "Recommended Measures (BCR \u2265 1.5)", bold=True)
+    rec_cell = ws.cell(row=row, column=2,
+        value=f"=COUNTIF('CBA Results'!{col2}{BCR_ROW}:{colN}{BCR_ROW},\">=1.5\")")
+    rec_cell.font = Font(name="Arial", size=11, bold=True, color=C_GREEN)
+    rec_cell.number_format = "0"
+    rec_cell.border = _bd()
+    row += 2
+
+    _cell(ws, row, 1, "Data Gaps / Recommended Next Steps", bold=True)
+    dg = ws.cell(row=row, column=2, value=data.get("data_gaps", "\u2014"))
+    dg.font = Font(name="Arial", size=9, italic=True, color="475569")
+    dg.alignment = Alignment(wrap_text=True, vertical="top")
+    dg.border = _bd()
+    ws.merge_cells(start_row=row, start_column=2, end_row=row + 2, end_column=4)
+    ws.row_dimensions[row].height = 48
 
     _auto_widths(ws)
 
@@ -407,7 +457,7 @@ def _parameter_registry(wb, data, am):
 
 
 # ── SHEET 0: ASSUMPTIONS ───────────────────────────────────────────────────────
-def _assumptions(wb, data) -> dict:
+def _assumptions(wb, data, scenario_params=None, challenge_type="general") -> dict:
     """Create ASSUMPTIONS sheet with VSL chain, CDD/specialist params, unit costs,
     and derived annual sub-benefit formulas. Returns am dict of cell references."""
     ws = wb.create_sheet("ASSUMPTIONS", 0)  # Insert as first sheet
@@ -520,8 +570,22 @@ def _assumptions(wb, data) -> dict:
         _frm_row(f"Step 6→7: VSL in {cur}",                 f"=B{PPP_ADJ_ROW}*B{FX_ROW}",                 "#,##0",  "Key output — used in all mortality/morbidity benefit formulas", row, highlight=True); VSL_LOCAL_ROW = row; row += 1
         _frm_row(f"Step 8: VSLY in {cur}",                  f"=B{VSL_LOCAL_ROW}/B{LIFE_EXP_ROW}",         "#,##0",  "Value per Statistical Life Year", row, highlight=True); VSLY_LOCAL_ROW = row; row += 2
 
-        # ── Section 2: CDD PARAMETERS ─────────────────────────────────────────
-        _sec(ws, row, 1, "CDD PARAMETERS", span=3); row += 1
+        # ── Section 2: CDD PARAMETERS (heat/general) or FLOOD PARAMETERS ────────
+        if challenge_type == "flood":
+            _sec(ws, row, 1, "FLOOD PARAMETERS", span=3); row += 1
+            _hdr(ws, row, 1, "Parameter", bg=C_ACCENT, sz=10)
+            _hdr(ws, row, 2, "Value", bg=C_ACCENT, sz=10)
+            _hdr(ws, row, 3, "Notes", bg=C_ACCENT, sz=10); row += 1
+            _inp_row("Storm Surge Return Period (yr)", 100, "#,##0",
+                     "IPCC AR6 WGI \u2014 100-year AEP event standard", row); row += 1
+            _inp_row("Flood Depth-Damage Coefficient", 0.40, "0.00",
+                     "Huizinga et al. 2017 JRC EUR 28552 EN", row); row += 1
+            _inp_row("Flood Mortality Rate (general population)", 0.008, "0.000000",
+                     "CBS Israel Life Tables 2022, age-standardised", row); row += 1
+            _inp_row("Population at Risk (coastal/floodplain)", 50000, "#,##0",
+                     "Project-specific \u2014 update with local census data", row); row += 2
+        else:
+            _sec(ws, row, 1, "CDD PARAMETERS", span=3); row += 1
         _hdr(ws, row, 1, "Parameter", bg=C_ACCENT, sz=10)
         _hdr(ws, row, 2, "Value", bg=C_ACCENT, sz=10)
         _hdr(ws, row, 3, "Notes", bg=C_ACCENT, sz=10)
@@ -548,31 +612,33 @@ def _assumptions(wb, data) -> dict:
                  "Gasparrini excess risk converted to per-CDD units", row, highlight=True); HEAT_MORT_ROW = row; row += 2
         _inp_row("Base Mortality Rate (annual)",              0.01,                                          "0.000",   "Deaths per person per year in at-risk population (default 1%)", row); BASE_MORT_ROW = row; row += 1
         _inp_row("Population at Risk / Pedestrians per Hour", cdd.get("population_density_or_pedestrians", 1000), "#,##0", "Project-specific population driver", row); POP_ROW = row; row += 2
+        # end CDD/heat else block — Section 3 also heat-only
 
-        # ── Section 3: SPECIALIST PARAMETERS ──────────────────────────────────
-        _sec(ws, row, 1, "SPECIALIST PARAMETERS", span=3); row += 1
-        _hdr(ws, row, 1, "Parameter", bg=C_ACCENT, sz=10)
-        _hdr(ws, row, 2, "Value", bg=C_ACCENT, sz=10)
-        _hdr(ws, row, 3, "Notes", bg=C_ACCENT, sz=10)
-        row += 1
+        # ── Section 3: SPECIALIST PARAMETERS (heat/general only) ───────────────
+        if challenge_type != "flood":
+            _sec(ws, row, 1, "SPECIALIST PARAMETERS", span=3); row += 1
+            _hdr(ws, row, 1, "Parameter", bg=C_ACCENT, sz=10)
+            _hdr(ws, row, 2, "Value", bg=C_ACCENT, sz=10)
+            _hdr(ws, row, 3, "Notes", bg=C_ACCENT, sz=10)
+            row += 1
 
-        _inp_row("Heat Reduction Efficiency",        sp.get("heat_reduction_efficiency", 0.5 if stype == "natural_shading" else 0.28), "0.00%", "Fraction of heat exposure avoided", row); HEAT_EFF_ROW = row; row += 1
-        _inp_row("UV Reduction Factor",              sp.get("uv_reduction_factor", 0.75),       "0.00%", "Natural shading UV attenuation", row); UV_RED_ROW = row; row += 1
-        _inp_row("Operating Hours per Day",          8,                                          "0",     "Hours of active shade/benefit per day", row); OP_HOURS_ROW = row; row += 1
-        _inp_row("Maturity Years (natural shading)", sp.get("maturity_years", 8),               "0",     "Linear ramp years 1→maturity_years, then 100%", row); MAT_YEARS_ROW = row; row += 1
-        # 3e. Skin Cancer Incidence Rate — Israeli Cancer Registry derivation
-        _block_title("SKIN CANCER INCIDENCE \u2014 Israeli Cancer Registry / WHO IARC (2020)", row); row += 1
-        r_sc_a = row; _step("Age-standardised incidence, all melanoma, Israel (2020)", 22.3, "Israeli National Cancer Registry, ICD-10 C43", row); row += 1
-        r_sc_b = row; _step("Population denominator (per 100,000 person-years)", 100_000, "Standardised rate base (WHO)", row); row += 1
-        r_sc_c = row; _step("\u00d7 UV-attributable fraction of skin cancers", 0.72, "WHO IARC Monograph 100D \u2014 UV attributable fraction", row); row += 1
-        _frm_row("\u25ba Annual skin cancer incidence rate (per person)", f"=B{r_sc_a}/B{r_sc_b}*B{r_sc_c}", "0.000000",
-                 "= 0.000161 \u2014 fraction of exposed persons developing melanoma/yr", row, highlight=True); SKINCANCER_ROW = row; row += 2
+            _inp_row("Heat Reduction Efficiency",        sp.get("heat_reduction_efficiency", 0.5 if stype == "natural_shading" else 0.28), "0.00%", "Fraction of heat exposure avoided", row); HEAT_EFF_ROW = row; row += 1
+            _inp_row("UV Reduction Factor",              sp.get("uv_reduction_factor", 0.75),       "0.00%", "Natural shading UV attenuation", row); UV_RED_ROW = row; row += 1
+            _inp_row("Operating Hours per Day",          8,                                          "0",     "Hours of active shade/benefit per day", row); OP_HOURS_ROW = row; row += 1
+            _inp_row("Maturity Years (natural shading)", sp.get("maturity_years", 8),               "0",     "Linear ramp years 1→maturity_years, then 100%", row); MAT_YEARS_ROW = row; row += 1
+            # 3e. Skin Cancer Incidence Rate — Israeli Cancer Registry derivation
+            _block_title("SKIN CANCER INCIDENCE \u2014 Israeli Cancer Registry / WHO IARC (2020)", row); row += 1
+            r_sc_a = row; _step("Age-standardised incidence, all melanoma, Israel (2020)", 22.3, "Israeli National Cancer Registry, ICD-10 C43", row); row += 1
+            r_sc_b = row; _step("Population denominator (per 100,000 person-years)", 100_000, "Standardised rate base (WHO)", row); row += 1
+            r_sc_c = row; _step("\u00d7 UV-attributable fraction of skin cancers", 0.72, "WHO IARC Monograph 100D \u2014 UV attributable fraction", row); row += 1
+            _frm_row("\u25ba Annual skin cancer incidence rate (per person)", f"=B{r_sc_a}/B{r_sc_b}*B{r_sc_c}", "0.000000",
+                     "= 0.000161 \u2014 fraction of exposed persons developing melanoma/yr", row, highlight=True); SKINCANCER_ROW = row; row += 2
 
-        # 3f. Morbidity Multiplier — WHO literature derivation
-        _block_title("MORBIDITY MULTIPLIER \u2014 WHO Europe / Epidemiological Literature", row); row += 1
-        r_mm_a = row; _step("Heat-related hospitalisation-to-death ratio (Mediterranean)", 10, "WHO Europe Heat Health Action Plan (2008), Table 2-4", row); row += 1
-        _frm_row("\u25ba Morbidity-to-Mortality Multiplier", f"=B{r_mm_a}", "0",
-                 "= 10 \u2014 morbidity cases per statistical death", row, highlight=True); MORB_MULT_ROW = row; row += 2
+            # 3f. Morbidity Multiplier — WHO literature derivation
+            _block_title("MORBIDITY MULTIPLIER \u2014 WHO Europe / Epidemiological Literature", row); row += 1
+            r_mm_a = row; _step("Heat-related hospitalisation-to-death ratio (Mediterranean)", 10, "WHO Europe Heat Health Action Plan (2008), Table 2-4", row); row += 1
+            _frm_row("\u25ba Morbidity-to-Mortality Multiplier", f"=B{r_mm_a}", "0",
+                     "= 10 \u2014 morbidity cases per statistical death", row, highlight=True); MORB_MULT_ROW = row; row += 2
 
         # ── Section 4: UNIT COSTS & RATES ─────────────────────────────────────
         _sec(ws, row, 1, "UNIT COSTS & RATES", span=3); row += 1
@@ -591,161 +657,182 @@ def _assumptions(wb, data) -> dict:
         _inp_row("Average Length of Stay (days)",           5.2,           "0.0",     "Clinical literature", row); AVG_LOS_ROW = row; row += 1
         _inp_row(f"Carbon Value ({cur}/unit/yr)",           carbon_default,"#,##0",   "NIS/tree/yr (shading) or NIS/m²/yr (green roof)", row); CARBON_ROW = row; row += 1
         _inp_row("Tree Density / Functional Unit Area",     1.0,           "0.0",     "Trees per lin m (shading) or m² per m² (green roof)", row); TREE_DENS_ROW = row; row += 1
-        _inp_row(f"Habitat Value ({cur}/m²/yr)",            300,           "#,##0",   "TEEB (2010); Israeli urban ecology studies", row); HABITAT_ROW = row; row += 1
+        _default_area = (sp.get("roof_area_m2") or
+                         next((m.get("specialist_params", {}) or {} for m in data.get("measures", [])), {}).get("implementation_area_m2") or
+                         1000)
+        _inp_row("Implementation Area (m²)",               _default_area, "#,##0",   "Project-specific — total vegetated/treated area (update per project)", row); IMPL_AREA_ROW = row; row += 1
+        _inp_row(f"Habitat Value ({cur}/m²/yr)",            300,           "#,##0",   "TEEB (2010) The Economics of Ecosystems & Biodiversity; Elmqvist et al. 2015 Nature Cities", row); HABITAT_ROW = row; row += 1
         _inp_row("Property Value Uplift %",                 sp.get("property_value_uplift_pct", 0.03), "0.00%", "Green roof hedonic uplift (Fuerst & McAllister 2011)", row); PROP_UPLIFT_ROW = row; row += 1
         _inp_row("Roof Longevity Extension (yrs)",          sp.get("roof_longevity_extension_years", 15), "0", "Membrane life extension vs conventional roof", row); ROOF_LONG_ROW = row; row += 1
-        _inp_row(f"PM2.5 Health Cost per Unit ({cur})",     1000,          "#,##0",   "Placeholder — WHO Air Quality Guidelines (2021)", row); PM25_ROW = row; row += 1
-        _inp_row(f"Runoff Cost Avoided per Unit ({cur})",   100,           "#,##0",   "Placeholder — local infrastructure cost", row); RUNOFF_COST_ROW = row; row += 1
-        _inp_row("Runoff Reduction Coefficient",            0.65,          "0.00",    "EPA Stormwater BMP Guide", row); RUNOFF_COEFF_ROW = row; row += 2
+        _inp_row(f"PM2.5 Health Cost per Unit ({cur})",     1000,          "#,##0",   "ExternE (EC 2005) EUR 55,000/ton PM2.5; Israeli Green Book 2024 NIS equivalent", row); PM25_ROW = row; row += 1
+        _inp_row(f"Stormwater Treatment Cost (NIS/m³)",     3.0,           "0.00",    "Israeli Water Authority tariff schedule 2023; IWA Specialist Group report 2022", row); RUNOFF_COST_ROW = row; row += 1
+        _inp_row("Runoff Reduction Coefficient",            0.65,          "0.00",    "EPA Stormwater BMP Guide (2004); WHO Water Sensitive Urban Design guidelines", row); RUNOFF_COEFF_ROW = row; row += 1
+        _inp_row("Annual Rainfall (m/yr)",                 0.413,         "0.000",   "IMS 1990–2020 average — Tel Aviv (Israel Meteorological Service)", row); RAINFALL_ROW = row; row += 1
+        _inp_row(f"NO\u2082 adsorption rate (g/m\u00b2/yr)",  2.23,       "0.000",   "ExternE (EC 2005); Nowak et al. 2006 Urban Forestry", row); NO2_RATE_ROW = row; row += 1
+        _inp_row(f"NO\u2082 damage cost ({cur}/ton)",       597_000,       "#,##0",   "Israeli Green Book 2024 — EUR 161,047/ton @ 3.7 NIS/EUR", row); NO2_COST_ROW = row; row += 1
+        _inp_row("PM10 adsorption rate (g/m\u00b2/yr)",    1.19,          "0.000",   "ExternE (EC 2005); Nowak et al. 2006", row); PM10_RATE_ROW = row; row += 1
+        _inp_row(f"PM10 damage cost ({cur}/ton)",           765_000,       "#,##0",   "Israeli Green Book 2024 — EUR 206,729/ton @ 3.7 NIS/EUR", row); PM10_COST_ROW = row; row += 2
 
-        # ── Section 5: STEP-BY-STEP BENEFIT CALCULATIONS ─────────────────────────
-        _sec(ws, row, 1,
-             f"STEP-BY-STEP BENEFIT CALCULATIONS  [{cur} millions / functional unit / base year]"
-             "  —  green ► rows feed directly into the year-by-year projection table",
-             span=3); row += 1
-        _hdr(ws, row, 1, "Step", bg=C_ACCENT, sz=10)
-        _hdr(ws, row, 2, "Value / Formula", bg=C_ACCENT, sz=10)
-        _hdr(ws, row, 3, "Unit / Source", bg=C_ACCENT, sz=10)
-        row += 1
+        # ── Section 5: STEP-BY-STEP BENEFIT CALCULATIONS (heat/general only) ──
+        SUB_ROWS: dict = {}
+        TOTAL_ROW: int = row  # fallback; overwritten inside flood guard below
+        if challenge_type != "flood":
+            _sec(ws, row, 1,
+                 f"STEP-BY-STEP BENEFIT CALCULATIONS  [{cur} millions / functional unit / base year]"
+                 "  —  green ► rows feed directly into the year-by-year projection table",
+                 span=3); row += 1
+            _hdr(ws, row, 1, "Step", bg=C_ACCENT, sz=10)
+            _hdr(ws, row, 2, "Value / Formula", bg=C_ACCENT, sz=10)
+            _hdr(ws, row, 3, "Unit / Source", bg=C_ACCENT, sz=10)
+            row += 1
 
-        SUB_ROWS = {}
+            # ── _final helper (Section 5 only — stores to SUB_ROWS) ──────────
+            def _final(key, label, val, fmt, note, r):
+                c1 = ws.cell(row=r, column=1, value=label)
+                c1.font = Font(name="Arial", bold=True, size=10, color=C_COMP_FG)
+                c1.fill = PatternFill("solid", fgColor=C_COMP_BG)
+                c1.border = _bd()
+                c1.alignment = Alignment(vertical="center")
+                c2 = ws.cell(row=r, column=2, value=val)
+                c2.font = Font(name="Arial", bold=True, size=10, color=C_COMP_FG)
+                c2.number_format = fmt
+                c2.fill = PatternFill("solid", fgColor=C_COMP_BG)
+                c2.border = _bd()
+                c2.alignment = Alignment(horizontal="right")
+                c3 = ws.cell(row=r, column=3, value=note)
+                c3.font = Font(name="Arial", size=8, color="94A3B8", italic=True)
+                c3.fill = PatternFill("solid", fgColor=C_COMP_BG)
+                c3.border = _bd()
+                SUB_ROWS[key] = r
 
-        # ── _final helper (Section 5 only — stores to SUB_ROWS) ──────────────
-        def _final(key, label, val, fmt, note, r):
-            c1 = ws.cell(row=r, column=1, value=label)
-            c1.font = Font(name="Arial", bold=True, size=10, color=C_COMP_FG)
-            c1.fill = PatternFill("solid", fgColor=C_COMP_BG)
-            c1.border = _bd()
-            c1.alignment = Alignment(vertical="center")
-            c2 = ws.cell(row=r, column=2, value=val)
-            c2.font = Font(name="Arial", bold=True, size=10, color=C_COMP_FG)
-            c2.number_format = fmt
-            c2.fill = PatternFill("solid", fgColor=C_COMP_BG)
-            c2.border = _bd()
+            # ── BLOCK 1: AVOIDED MORTALITY ────────────────────────────────────
+            _block_title("AVOIDED MORTALITY", row); row += 1
+            r_pop1    = row; _step("Population at Risk",             f"=B{POP_ROW}",            "pax/hr or residents",          row, is_ref=True);       row += 1
+            r_mort1   = row; _step("× Base Mortality Rate (annual)", f"=B{BASE_MORT_ROW}",      "deaths/person/year",           row, is_ref=True);       row += 1
+            r_dths1   = row; _step("= Annual Deaths in Population",  f"=B{r_pop1}*B{r_mort1}", "",                             row, is_computed=True);  row += 1
+            r_hmf1    = row; _step("× Heat-Mortality Factor",        f"=B{HEAT_MORT_ROW}",      "fraction of annual deaths",            row, is_ref=True);       row += 1
+            r_hdth1   = row; _step("= Heat-Attributable Deaths/yr",  f"=B{r_dths1}*B{r_hmf1}", "",                            row, is_computed=True);  row += 1
+            r_eff1    = row; _step("× Heat Reduction Efficiency",    f"=B{HEAT_EFF_ROW}",       "fraction of heat avoided",     row, is_ref=True);       row += 1
+            r_davd1   = row; _step("= Deaths Avoided per Year",      f"=B{r_hdth1}*B{r_eff1}", "",                            row, is_computed=True);  row += 1
+            r_vsl1    = row; _step("× VSL (local currency)",         f"=B{VSL_LOCAL_ROW}",      "linked from VSL chain above",  row, is_ref=True);       row += 1
+            _final("avoided_mortality_npv",
+                   "► ANNUAL AVOIDED MORTALITY (NIS M)",
+                   f"=B{r_davd1}*B{r_vsl1}/1000000",
+                   "#,##0.000", "deaths_avoided × VSL ÷ 1,000,000", row); row += 2
+
+            # ── BLOCK 2: MORBIDITY SAVINGS ────────────────────────────────────
+            _block_title("MORBIDITY SAVINGS", row); row += 1
+            r_pop2    = row; _step("Population at Risk",             f"=B{POP_ROW}",                    "pax/hr or residents",        row, is_ref=True);       row += 1
+            r_mort2   = row; _step("× Base Mortality Rate (annual)", f"=B{BASE_MORT_ROW}",              "deaths/person/year",         row, is_ref=True);       row += 1
+            r_dths2   = row; _step("= Annual Deaths in Population",  f"=B{r_pop2}*B{r_mort2}",         "",                           row, is_computed=True);  row += 1
+            r_mmult   = row; _step("× Morbidity Multiplier",         f"=B{MORB_MULT_ROW}",              "morbidity cases per death",  row, is_ref=True);       row += 1
+            r_mcases  = row; _step("= Annual Morbidity Cases",       f"=B{r_dths2}*B{r_mmult}",        "",                           row, is_computed=True);  row += 1
+            r_hmf2    = row; _step("× Heat-Mortality Factor",        f"=B{HEAT_MORT_ROW}",              "heat-attributable fraction", row, is_ref=True);       row += 1
+            r_eff2    = row; _step("× Heat Reduction Efficiency",    f"=B{HEAT_EFF_ROW}",               "fraction of heat avoided",   row, is_ref=True);       row += 1
+            r_cavd    = row; _step("= Cases Avoided per Year",       f"=B{r_mcases}*B{r_hmf2}*B{r_eff2}", "",                       row, is_computed=True);  row += 1
+            r_hcost   = row; _step("× Hospitalization Cost / Day",   f"=B{HOSP_COST_ROW}",              f"{cur}/day",                 row, is_ref=True);       row += 1
+            r_los     = row; _step("× Average Length of Stay (days)",f"=B{AVG_LOS_ROW}",               "days/case",                  row, is_ref=True);       row += 1
+            _final("morbidity_savings_npv",
+                   "► ANNUAL MORBIDITY SAVINGS (NIS M)",
+                   f"=B{r_cavd}*B{r_hcost}*B{r_los}/1000000",
+                   "#,##0.000", "cases_avoided × hosp_cost × LOS ÷ 1,000,000", row); row += 2
+
+            # ── BLOCK 3: SKIN CANCER PREVENTION ──────────────────────────────
+            _block_title("SKIN CANCER PREVENTION", row); row += 1
+            r_ped     = row; _step("Pedestrians per Hour",            f"=B{POP_ROW}",                            "pax/hr",                    row, is_ref=True);       row += 1
+            r_hrs     = row; _step("× Operating Hours per Day",       f"=B{OP_HOURS_ROW}",                       "hours/day",                 row, is_ref=True);       row += 1
+            r_phrs    = row; _step("= Daily Person-Hours Exposed",    f"=B{r_ped}*B{r_hrs}",                    "",                          row, is_computed=True);  row += 1
+            r_uv      = row; _step("× UV Reduction Factor",           f"=B{UV_RED_ROW}",                         "fraction of UV blocked",    row, is_ref=True);       row += 1
+            r_puvh    = row; _step("= UV-Protected Person-Hours/Day", f"=B{r_phrs}*B{r_uv}",                   "",                          row, is_computed=True);  row += 1
+            r_inci    = row; _step("× Skin Cancer Incidence Rate",    f"=B{SKINCANCER_ROW}",                    "cases/person/year",         row, is_ref=True);       row += 1
+            r_cprev   = row; _step("= Cases Prevented per Year",      f"=B{r_puvh}*B{r_inci}",                 "",                          row, is_computed=True);  row += 1
+            r_trtcst  = row; _step("Treatment Cost (Hosp × LOS)",     f"=B{HOSP_COST_ROW}*B{AVG_LOS_ROW}",     f"{cur}/case",               row, is_computed=True);  row += 1
+            r_vsly    = row; _step("+ VSLY (life-years value)",       f"=B{VSLY_LOCAL_ROW}",                    f"{cur}/life-year",          row, is_ref=True);       row += 1
+            r_vpc     = row; _step("= Value per Case Prevented",      f"=B{r_trtcst}+B{r_vsly}",               f"{cur}",                    row, is_computed=True);  row += 1
+            _final("skin_cancer_prevention_npv",
+                   "► ANNUAL SKIN CANCER PREV. (NIS M)",
+                   f"=B{r_cprev}*B{r_vpc}/1000000",
+                   "#,##0.000", "cases_prevented × value_per_case ÷ 1,000,000", row); row += 2
+
+            # ── BLOCK 4: CARBON SEQUESTRATION ─────────────────────────────────
+            _block_title("CARBON SEQUESTRATION", row); row += 1
+            r_cval    = row; _step(f"Carbon Value ({cur}/m²/yr)",         f"=B{CARBON_ROW}",     f"{cur} per m²/yr",           row, is_ref=True); row += 1
+            r_carea   = row; _step("× Implementation Area (m²)",          f"=B{IMPL_AREA_ROW}",  "m² — total vegetated area",  row, is_ref=True); row += 1
+            _final("carbon_sequestration_npv",
+                   "► ANNUAL CARBON SEQ. (NIS M)",
+                   f"=B{r_cval}*B{r_carea}/1000000",
+                   "#,##0.000", "carbon_value × area_m² ÷ 1,000,000", row); row += 2
+
+            # ── BLOCK 5: RUNOFF REDUCTION ──────────────────────────────────────
+            _block_title("RUNOFF REDUCTION", row); row += 1
+            r_rarea   = row; _step("Implementation Area (m²)",            f"=B{IMPL_AREA_ROW}",  "m²",                         row, is_ref=True); row += 1
+            r_rain    = row; _step("× Annual Rainfall (m/yr)",            f"=B{RAINFALL_ROW}",   "m/yr",                       row, is_ref=True); row += 1
+            r_rcoeff  = row; _step("× Runoff Reduction Coefficient",      f"=B{RUNOFF_COEFF_ROW}","fraction",                  row, is_ref=True); row += 1
+            r_rcost   = row; _step(f"× Stormwater Treatment Cost ({cur}/m³)", f"=B{RUNOFF_COST_ROW}", f"{cur}/m³",             row, is_ref=True); row += 1
+            _final("runoff_reduction_npv",
+                   "► ANNUAL RUNOFF REDUCTION (NIS M)",
+                   f"=B{r_rarea}*B{r_rain}*B{r_rcoeff}*B{r_rcost}/1000000",
+                   "#,##0.000", "area × rainfall × coeff × treatment_cost ÷ 1,000,000", row); row += 2
+
+            # ── BLOCK 6: AIR QUALITY ──────────────────────────────────────────
+            _block_title("AIR QUALITY — Pollutant Adsorption", row); row += 1
+            r_aqarea  = row; _step("Implementation Area (m²)",            f"=B{IMPL_AREA_ROW}",  "m²",                         row, is_ref=True); row += 1
+            r_no2r    = row; _step("NO\u2082 adsorption rate (g/m\u00b2/yr)", f"=B{NO2_RATE_ROW}", "g/m²/yr",                  row, is_ref=True); row += 1
+            r_no2c    = row; _step(f"NO\u2082 damage cost ({cur}/ton)",   f"=B{NO2_COST_ROW}",   f"{cur}/ton",                 row, is_ref=True); row += 1
+            r_pm10r   = row; _step("PM10 adsorption rate (g/m\u00b2/yr)",f"=B{PM10_RATE_ROW}",  "g/m²/yr",                   row, is_ref=True); row += 1
+            r_pm10c   = row; _step(f"PM10 damage cost ({cur}/ton)",       f"=B{PM10_COST_ROW}",  f"{cur}/ton",                 row, is_ref=True); row += 1
+            # formula: area/1e6 * (NO2_rate*NO2_cost + PM10_rate*PM10_cost) / 1e6
+            # (g/m²/yr × m² × NIS/ton × 1ton/1e6g → NIS/yr → NIS M /1e6)
+            _aq_formula = (f"=B{r_aqarea}/1000000"
+                           f"*(B{r_no2r}*B{r_no2c}+B{r_pm10r}*B{r_pm10c})"
+                           f"/1000000")
+            _final("air_quality_npv",
+                   "► ANNUAL AIR QUALITY BENEFIT (NIS M)",
+                   _aq_formula,
+                   "#,##0.000", "area × (NO₂_rate×NO₂_cost + PM10_rate×PM10_cost) / 1e12", row); row += 2
+
+            # ── BLOCK 7: HABITAT CREATION ─────────────────────────────────────
+            _block_title("HABITAT CREATION", row); row += 1
+            r_hval    = row; _step(f"Habitat Value ({cur}/m²/yr)",        f"=B{HABITAT_ROW}",    f"{cur}/m²/yr",               row, is_ref=True); row += 1
+            r_harea   = row; _step("× Implementation Area (m²)",          f"=B{IMPL_AREA_ROW}",  "m²",                         row, is_ref=True); row += 1
+            _final("habitat_creation_npv",
+                   "► ANNUAL HABITAT CREATION (NIS M)",
+                   f"=B{r_hval}*B{r_harea}/1000000",
+                   "#,##0.000", "habitat_value × area_m² ÷ 1,000,000", row); row += 2
+
+            # ── BLOCK 8: PROPERTY VALUE UPLIFT (green roof) ───────────────────
+            _block_title("PROPERTY VALUE UPLIFT  (Year 1 lump sum)", row); row += 1
+            r_puplift = row; _step("Property Value Uplift %",        f"=B{PROP_UPLIFT_ROW}", "fraction (e.g. 0.03 = 3%)", row, is_ref=True); row += 1
+            _final("property_value_uplift_npv",
+                   "► YEAR-1 UPLIFT VALUE (NIS M)",
+                   f"=B{r_puplift}/1000000",
+                   "#,##0.000", "Scale by roof_area × property_value when data available. Year 1 only.", row); row += 2
+
+            # ── BLOCK 9: ROOF LONGEVITY (green roof) ──────────────────────────
+            _block_title("ROOF LONGEVITY EXTENSION  (lump sum)", row); row += 1
+            r_rlong   = row; _step("Roof Longevity Extension (yrs)",  f"=B{ROOF_LONG_ROW}", "years beyond conventional roof", row, is_ref=True); row += 1
+            _final("roof_longevity_npv",
+                   "► ROOF LONGEVITY LUMP SUM (NIS M)",
+                   f"=B{r_rlong}/1000000",
+                   "#,##0.000", "Scale by replacement_cost when data available. Year 1 only.", row); row += 2
+
+            # Total row — styled as a key output, feeds Inputs Annual Benefit via formula
+            total_formula = "+".join(f"B{r}" for r in SUB_ROWS.values())
+            TOTAL_ROW = row
+            c1 = ws.cell(row=row, column=1, value="► TOTAL ANNUAL BENEFIT  (sum of all components → drives Inputs & NPV)")
+            c1.font = Font(name="Arial", bold=True, size=11, color=C_GREEN)
+            c1.fill = PatternFill("solid", fgColor="F0FDF4"); c1.border = _bd()
+            c2 = ws.cell(row=row, column=2, value=f"={total_formula}")
+            c2.font = Font(name="Arial", bold=True, size=11, color=C_GREEN)
+            c2.fill = PatternFill("solid", fgColor="F0FDF4")
+            c2.number_format = "#,##0.000"; c2.border = _bd()
             c2.alignment = Alignment(horizontal="right")
-            c3 = ws.cell(row=r, column=3, value=note)
+            c3 = ws.cell(row=row, column=3,
+                         value="NIS M/yr — referenced by Inputs!Annual_Benefit cell; change any parameter above to update NPV/BCR")
             c3.font = Font(name="Arial", size=8, color="94A3B8", italic=True)
-            c3.fill = PatternFill("solid", fgColor=C_COMP_BG)
-            c3.border = _bd()
-            SUB_ROWS[key] = r
-
-        # ── BLOCK 1: AVOIDED MORTALITY ────────────────────────────────────────
-        _block_title("AVOIDED MORTALITY", row); row += 1
-        r_pop1    = row; _step("Population at Risk",             f"=B{POP_ROW}",            "pax/hr or residents",          row, is_ref=True);       row += 1
-        r_mort1   = row; _step("× Base Mortality Rate (annual)", f"=B{BASE_MORT_ROW}",      "deaths/person/year",           row, is_ref=True);       row += 1
-        r_dths1   = row; _step("= Annual Deaths in Population",  f"=B{r_pop1}*B{r_mort1}", "",                             row, is_computed=True);  row += 1
-        r_hmf1    = row; _step("× Heat-Mortality Factor",        f"=B{HEAT_MORT_ROW}",      "fraction of annual deaths",            row, is_ref=True);       row += 1
-        r_hdth1   = row; _step("= Heat-Attributable Deaths/yr",  f"=B{r_dths1}*B{r_hmf1}", "",                            row, is_computed=True);  row += 1
-        r_eff1    = row; _step("× Heat Reduction Efficiency",    f"=B{HEAT_EFF_ROW}",       "fraction of heat avoided",     row, is_ref=True);       row += 1
-        r_davd1   = row; _step("= Deaths Avoided per Year",      f"=B{r_hdth1}*B{r_eff1}", "",                            row, is_computed=True);  row += 1
-        r_vsl1    = row; _step("× VSL (local currency)",         f"=B{VSL_LOCAL_ROW}",      "linked from VSL chain above",  row, is_ref=True);       row += 1
-        _final("avoided_mortality_npv",
-               "► ANNUAL AVOIDED MORTALITY (NIS M)",
-               f"=B{r_davd1}*B{r_vsl1}/1000000",
-               "#,##0.000", "deaths_avoided × VSL ÷ 1,000,000", row); row += 2
-
-        # ── BLOCK 2: MORBIDITY SAVINGS ────────────────────────────────────────
-        _block_title("MORBIDITY SAVINGS", row); row += 1
-        r_pop2    = row; _step("Population at Risk",             f"=B{POP_ROW}",                    "pax/hr or residents",        row, is_ref=True);       row += 1
-        r_mort2   = row; _step("× Base Mortality Rate (annual)", f"=B{BASE_MORT_ROW}",              "deaths/person/year",         row, is_ref=True);       row += 1
-        r_dths2   = row; _step("= Annual Deaths in Population",  f"=B{r_pop2}*B{r_mort2}",         "",                           row, is_computed=True);  row += 1
-        r_mmult   = row; _step("× Morbidity Multiplier",         f"=B{MORB_MULT_ROW}",              "morbidity cases per death",  row, is_ref=True);       row += 1
-        r_mcases  = row; _step("= Annual Morbidity Cases",       f"=B{r_dths2}*B{r_mmult}",        "",                           row, is_computed=True);  row += 1
-        r_hmf2    = row; _step("× Heat-Mortality Factor",        f"=B{HEAT_MORT_ROW}",              "heat-attributable fraction", row, is_ref=True);       row += 1
-        r_eff2    = row; _step("× Heat Reduction Efficiency",    f"=B{HEAT_EFF_ROW}",               "fraction of heat avoided",   row, is_ref=True);       row += 1
-        r_cavd    = row; _step("= Cases Avoided per Year",       f"=B{r_mcases}*B{r_hmf2}*B{r_eff2}", "",                       row, is_computed=True);  row += 1
-        r_hcost   = row; _step("× Hospitalization Cost / Day",   f"=B{HOSP_COST_ROW}",              f"{cur}/day",                 row, is_ref=True);       row += 1
-        r_los     = row; _step("× Average Length of Stay (days)",f"=B{AVG_LOS_ROW}",               "days/case",                  row, is_ref=True);       row += 1
-        _final("morbidity_savings_npv",
-               "► ANNUAL MORBIDITY SAVINGS (NIS M)",
-               f"=B{r_cavd}*B{r_hcost}*B{r_los}/1000000",
-               "#,##0.000", "cases_avoided × hosp_cost × LOS ÷ 1,000,000", row); row += 2
-
-        # ── BLOCK 3: SKIN CANCER PREVENTION ──────────────────────────────────
-        _block_title("SKIN CANCER PREVENTION", row); row += 1
-        r_ped     = row; _step("Pedestrians per Hour",            f"=B{POP_ROW}",                            "pax/hr",                    row, is_ref=True);       row += 1
-        r_hrs     = row; _step("× Operating Hours per Day",       f"=B{OP_HOURS_ROW}",                       "hours/day",                 row, is_ref=True);       row += 1
-        r_phrs    = row; _step("= Daily Person-Hours Exposed",    f"=B{r_ped}*B{r_hrs}",                    "",                          row, is_computed=True);  row += 1
-        r_uv      = row; _step("× UV Reduction Factor",           f"=B{UV_RED_ROW}",                         "fraction of UV blocked",    row, is_ref=True);       row += 1
-        r_puvh    = row; _step("= UV-Protected Person-Hours/Day", f"=B{r_phrs}*B{r_uv}",                   "",                          row, is_computed=True);  row += 1
-        r_inci    = row; _step("× Skin Cancer Incidence Rate",    f"=B{SKINCANCER_ROW}",                    "cases/person/year",         row, is_ref=True);       row += 1
-        r_cprev   = row; _step("= Cases Prevented per Year",      f"=B{r_puvh}*B{r_inci}",                 "",                          row, is_computed=True);  row += 1
-        r_trtcst  = row; _step("Treatment Cost (Hosp × LOS)",     f"=B{HOSP_COST_ROW}*B{AVG_LOS_ROW}",     f"{cur}/case",               row, is_computed=True);  row += 1
-        r_vsly    = row; _step("+ VSLY (life-years value)",       f"=B{VSLY_LOCAL_ROW}",                    f"{cur}/life-year",          row, is_ref=True);       row += 1
-        r_vpc     = row; _step("= Value per Case Prevented",      f"=B{r_trtcst}+B{r_vsly}",               f"{cur}",                    row, is_computed=True);  row += 1
-        _final("skin_cancer_prevention_npv",
-               "► ANNUAL SKIN CANCER PREV. (NIS M)",
-               f"=B{r_cprev}*B{r_vpc}/1000000",
-               "#,##0.000", "cases_prevented × value_per_case ÷ 1,000,000", row); row += 2
-
-        # ── BLOCK 4: CARBON SEQUESTRATION ─────────────────────────────────────
-        _block_title("CARBON SEQUESTRATION", row); row += 1
-        r_cval    = row; _step(f"Carbon Value ({cur}/tree or m²/yr)", f"=B{CARBON_ROW}",    "NIS per unit per year",      row, is_ref=True); row += 1
-        r_tdens   = row; _step("× Tree Density / Functional Area",    f"=B{TREE_DENS_ROW}", "trees/lin m or m²/m²",      row, is_ref=True); row += 1
-        _final("carbon_sequestration_npv",
-               "► ANNUAL CARBON SEQ. (NIS M)",
-               f"=B{r_cval}*B{r_tdens}/1000000",
-               "#,##0.000", "carbon_value × density ÷ 1,000,000", row); row += 2
-
-        # ── BLOCK 5: RUNOFF REDUCTION ──────────────────────────────────────────
-        _block_title("RUNOFF REDUCTION", row); row += 1
-        r_rcost   = row; _step(f"Runoff Cost Avoided per Unit",  f"=B{RUNOFF_COST_ROW}",  f"{cur}/unit (placeholder)", row, is_ref=True); row += 1
-        r_rcoeff  = row; _step("× Runoff Reduction Coefficient", f"=B{RUNOFF_COEFF_ROW}", "fraction",                  row, is_ref=True); row += 1
-        _final("runoff_reduction_npv",
-               "► ANNUAL RUNOFF REDUCTION (NIS M)",
-               f"=B{r_rcost}*B{r_rcoeff}/1000000",
-               "#,##0.000", "runoff_cost × coefficient ÷ 1,000,000", row); row += 2
-
-        # ── BLOCK 6: AIR QUALITY ──────────────────────────────────────────────
-        _block_title("AIR QUALITY", row); row += 1
-        r_pm25    = row; _step(f"PM2.5 Health Cost per Unit",   f"=B{PM25_ROW}", f"{cur}/unit (placeholder)",        row, is_ref=True); row += 1
-        _final("air_quality_npv",
-               "► ANNUAL AIR QUALITY BENEFIT (NIS M)",
-               f"=B{r_pm25}/1000000",
-               "#,##0.000", "pm25_health_cost ÷ 1,000,000  (scale by area/trees when data available)", row); row += 2
-
-        # ── BLOCK 7: HABITAT CREATION ─────────────────────────────────────────
-        _block_title("HABITAT CREATION", row); row += 1
-        r_hval    = row; _step(f"Habitat Value ({cur}/m²/yr)",    f"=B{HABITAT_ROW}",    f"{cur}/m²/yr",          row, is_ref=True); row += 1
-        r_tdens2  = row; _step("× Tree Density / Functional Area", f"=B{TREE_DENS_ROW}", "trees/lin m or m²/m²",  row, is_ref=True); row += 1
-        _final("habitat_creation_npv",
-               "► ANNUAL HABITAT CREATION (NIS M)",
-               f"=B{r_hval}*B{r_tdens2}/1000000",
-               "#,##0.000", "habitat_value × area ÷ 1,000,000", row); row += 2
-
-        # ── BLOCK 8: PROPERTY VALUE UPLIFT (green roof) ───────────────────────
-        _block_title("PROPERTY VALUE UPLIFT  (Year 1 lump sum)", row); row += 1
-        r_puplift = row; _step("Property Value Uplift %",        f"=B{PROP_UPLIFT_ROW}", "fraction (e.g. 0.03 = 3%)", row, is_ref=True); row += 1
-        _final("property_value_uplift_npv",
-               "► YEAR-1 UPLIFT VALUE (NIS M)",
-               f"=B{r_puplift}/1000000",
-               "#,##0.000", "Scale by roof_area × property_value when data available. Year 1 only.", row); row += 2
-
-        # ── BLOCK 9: ROOF LONGEVITY (green roof) ──────────────────────────────
-        _block_title("ROOF LONGEVITY EXTENSION  (lump sum)", row); row += 1
-        r_rlong   = row; _step("Roof Longevity Extension (yrs)",  f"=B{ROOF_LONG_ROW}", "years beyond conventional roof", row, is_ref=True); row += 1
-        _final("roof_longevity_npv",
-               "► ROOF LONGEVITY LUMP SUM (NIS M)",
-               f"=B{r_rlong}/1000000",
-               "#,##0.000", "Scale by replacement_cost when data available. Year 1 only.", row); row += 2
-
-        # Total row — styled as a key output, feeds Inputs Annual Benefit via formula
-        total_formula = "+".join(f"B{r}" for r in SUB_ROWS.values())
-        TOTAL_ROW = row
-        c1 = ws.cell(row=row, column=1, value="► TOTAL ANNUAL BENEFIT  (sum of all components → drives Inputs & NPV)")
-        c1.font = Font(name="Arial", bold=True, size=11, color=C_GREEN)
-        c1.fill = PatternFill("solid", fgColor="F0FDF4"); c1.border = _bd()
-        c2 = ws.cell(row=row, column=2, value=f"={total_formula}")
-        c2.font = Font(name="Arial", bold=True, size=11, color=C_GREEN)
-        c2.fill = PatternFill("solid", fgColor="F0FDF4")
-        c2.number_format = "#,##0.000"; c2.border = _bd()
-        c2.alignment = Alignment(horizontal="right")
-        c3 = ws.cell(row=row, column=3,
-                     value="NIS M/yr — referenced by Inputs!Annual_Benefit cell; change any parameter above to update NPV/BCR")
-        c3.font = Font(name="Arial", size=8, color="94A3B8", italic=True)
-        c3.fill = PatternFill("solid", fgColor="F0FDF4"); c3.border = _bd()
-        ws.row_dimensions[row].height = 20
-        row += 1
+            c3.fill = PatternFill("solid", fgColor="F0FDF4"); c3.border = _bd()
+            ws.row_dimensions[row].height = 20
+            row += 1
 
         _auto_widths(ws)
 
@@ -777,12 +864,74 @@ def _assumptions(wb, data) -> dict:
         am["sub_habitat_creation"]       = am.get("sub_habitat_creation_npv",       am.get("sub_habitat_creation"))
         am["sub_property_value_uplift"]  = am.get("sub_property_value_uplift_npv",  am.get("sub_property_value_uplift"))
         am["sub_roof_longevity"]         = am.get("sub_roof_longevity_npv",         am.get("sub_roof_longevity"))
-        return am
+
+    # ── CLIMATE SCENARIO PARAMETERS ──────────────────────────────────────────────
+    _csp = scenario_params or {
+        "name": "Stable (Baseline)", "heat_days_growth_rate": 0.0, "cdd_increment": 0.0
+    }
+    _sec(ws, row, 1, "CLIMATE SCENARIO PARAMETERS", span=3); row += 1
+    _hdr(ws, row, 1, "Parameter", bg=C_ACCENT, sz=10)
+    _hdr(ws, row, 2, "Value", bg=C_ACCENT, sz=10)
+    _hdr(ws, row, 3, "Notes", bg=C_ACCENT, sz=10)
+    row += 1
+
+    SCENARIO_NAME_ROW = row
+    _cell(ws, row, 1, "Scenario Name", bold=True)
+    _exog_cell(ws, row, 2, _csp.get("name", "Stable (Baseline)"))
+    _cell(ws, row, 3, "User-selected via Streamlit UI")
+    row += 1
+
+    R_EXP_ROW = row
+    _cell(ws, row, 1, "Heat Days Growth Rate (r_exp)", bold=True)
+    _exog_cell(ws, row, 2, _csp.get("heat_days_growth_rate", 0.0), fmt="0.000")
+    _cell(ws, row, 3, "IPCC AR6 WGI (2021); IMS Climate Scenarios — exponential driver for mortality/morbidity")
+    row += 1
+
+    CDD_INC_ROW = row
+    _cell(ws, row, 1, "CDD Annual Increment", bold=True)
+    _exog_cell(ws, row, 2, _csp.get("cdd_increment", 0.0), fmt="0.0")
+    _cell(ws, row, 3, "IPCC AR6 WGI (2021); IMS Climate Scenarios — linear driver for energy savings")
+    row += 1
+
+    _baseline_cdd = (data.get("cdd_params") or {}).get("annual_cdd", 735) or 735
+    BASELINE_CDD_ROW = row
+    _cell(ws, row, 1, "Baseline Annual CDD", bold=True)
+    _exog_cell(ws, row, 2, _baseline_cdd, fmt="#,##0")
+    _cell(ws, row, 3, "IMS / cdd_params['annual_cdd'] or default 735 (Tel Aviv, 21\u00b0C base)")
+    row += 1
+
+    FLOOD_FREQ_ROW = row
+    _cell(ws, row, 1, "Flood Freq. Multiplier (/decade)", bold=True)
+    _exog_cell(ws, row, 2, _csp.get("flood_frequency_multiplier", 0.0), fmt="0.00")
+    _cell(ws, row, 3, "IPCC AR6 WGI (2021) — fractional increase in flood event frequency per decade")
+    row += 1
+
+    SEA_RISE_ROW = row
+    _cell(ws, row, 1, "Sea Level Rise (cm/decade)", bold=True)
+    _exog_cell(ws, row, 2, _csp.get("sea_level_rise_cm_per_decade", 0.0), fmt="0.0")
+    _cell(ws, row, 3, "IPCC AR6 WGI (2021); IMS coastal projections")
+    row += 1
+
+    DROUGHT_ROW = row
+    _cell(ws, row, 1, "Drought Intensity Mult. (/decade)", bold=True)
+    _exog_cell(ws, row, 2, _csp.get("drought_intensity_multiplier", 0.0), fmt="0.00")
+    _cell(ws, row, 3, "IPCC AR6 WGI (2021) — fractional increase in drought intensity per decade")
+    row += 1
+
+    am["scenario_name"] = f"ASSUMPTIONS!$B${SCENARIO_NAME_ROW}"
+    am["r_exp"]         = f"ASSUMPTIONS!$B${R_EXP_ROW}"
+    am["cdd_inc"]       = f"ASSUMPTIONS!$B${CDD_INC_ROW}"
+    am["baseline_cdd"]  = f"ASSUMPTIONS!$B${BASELINE_CDD_ROW}"
+    am["flood_freq"]    = f"ASSUMPTIONS!$B${FLOOD_FREQ_ROW}"
+    am["sea_rise"]      = f"ASSUMPTIONS!$B${SEA_RISE_ROW}"
+    am["drought_int"]   = f"ASSUMPTIONS!$B${DROUGHT_ROW}"
+
+    return am
 
 
 
 # ── SHEET: CALCULATIONS ────────────────────────────────────────────────────────
-def _calculations(wb, data, rm, am=None):
+def _calculations(wb, data, rm, am=None, bd_total_refs=None):
     """Step-by-step audit trail for NPV/BCR and sensitivity analysis BCR recalculations."""
     ws = wb.create_sheet("CALCULATIONS")
     ws.sheet_view.showGridLines = False
@@ -977,6 +1126,25 @@ def _calculations(wb, data, rm, am=None):
         calc_npv_rows[mi] = r_npv
         calc_bcr_rows[mi] = r_bcr
 
+        # BUG 5: per-measure benefit stream breakdown (generic mode only)
+        if not data.get("specialist_type") and bd_total_refs:
+            _bd_entry = bd_total_refs.get(mi)
+            if isinstance(_bd_entry, dict):
+                _sub_title("BENEFIT STREAM BREAKDOWN (from Benefit Detail sheet)", row); row += 1
+                for cat, label in [
+                    ("health", "Health Benefits"),
+                    ("energy", "Energy / Cost Savings"),
+                    ("other",  "Other / Ecosystem Benefits"),
+                ]:
+                    _ref = _bd_entry.get(cat)
+                    if _ref:
+                        _step(label, f"={_ref}", f"{cur}M / yr", row, is_ref=True); row += 1
+                _step("Total Annual Benefit (sum)", f"={_bd_entry['total']}",
+                      f"{cur}M / yr — same as Inputs 'Annual Benefit' cell", row, is_ref=True)
+                row += 2
+            else:
+                row += 0  # already has row += 2 after payback line above
+
     rm["calc_npv_rows"] = calc_npv_rows
     rm["calc_bcr_rows"] = calc_bcr_rows
 
@@ -1170,19 +1338,446 @@ def _sanitise_mortality_params(data: dict) -> list[str]:
     return warnings
 
 
-def build_excel(data: dict, path: str, assumptions_override: dict = None):
+def _verify_golden_thread(data: dict, bd_total_refs: dict) -> list:
+    """
+    For the generic pathway: verify that every benefit_component has a corresponding
+    formula cell in bd_total_refs (i.e., its type was handled by FORMULA_BUILDERS).
+    Returns a list of orphan description strings. An orphan means the benefit
+    is not summed into the measure's NPV in Benefit Detail.
+    """
+    HANDLED = {"avoided_mortality", "energy_savings", "morbidity_savings",
+               "property_value_uplift", "generic_annual"}
+    orphans = []
+    for i, m in enumerate(data.get("measures", [])):
+        for comp in (m.get("benefit_components") or []):
+            ctype = comp.get("type", "")
+            if ctype not in HANDLED:
+                orphans.append(
+                    f"Measure '{m.get('name', i)}' / component '{comp.get('name', ctype)}' "
+                    f"(type='{ctype}') — no formula builder found; benefit excluded from NPV."
+                )
+        if m.get("benefit_components") and i not in bd_total_refs:
+            orphans.append(
+                f"Measure '{m.get('name', i)}' — has benefit_components but no total reference "
+                "in Benefit Detail. All components may have unsupported types."
+            )
+    return orphans
+
+
+def _build_specialist_cat_refs(data: dict, am: dict) -> dict:
+    """Build yrp_cat_refs from am sub-row refs for specialist types (no benefit_detail sheet)."""
+    n = len(data.get("measures", []))
+    H_keys = ("sub_avoided_mortality", "sub_morbidity_savings", "sub_skin_cancer_prevention")
+    O_keys = ("sub_carbon_sequestration", "sub_runoff_reduction", "sub_air_quality",
+               "sub_habitat_creation", "sub_property_value_uplift", "sub_roof_longevity")
+    H = [am[k] for k in H_keys if am.get(k)]
+    O = [am[k] for k in O_keys if am.get(k)]
+    return {
+        mi: {
+            "health": ("+".join(H) if H else "0"),
+            "energy": "0",
+            "other":  ("+".join(O) if O else "0"),
+        }
+        for mi in range(n)
+    }
+
+
+def _yearly_projection(wb, data, rm, am, yrp_cat_refs, challenge_type="general") -> dict:
+    """
+    Create 'Yearly_Projection_Model' sheet — 50-row dynamic benefit table per measure.
+    Returns yrp_refs = {mi: {"npv_cell": "'Yearly_Projection_Model'!H<row>"}}.
+    """
+    import logging
+
+    ws = wb.create_sheet("Yearly_Projection_Model")
+    ws.sheet_view.showGridLines = False
+    ws.tab_color = "15803d"
+
+    measures  = data.get("measures", [])
+    n         = len(measures)
+    horizon   = int(data.get("time_horizon", 50) or 50)
+    stype     = data.get("specialist_type")
+
+    # Column widths
+    for col, w in enumerate([6, 13, 13, 13, 16, 16, 16, 16], 1):
+        ws.column_dimensions[get_column_letter(col)].width = w
+
+    # ── Sheet title
+    c = ws.cell(row=1, column=1, value="YEARLY PROJECTION MODEL — DYNAMIC 50-YEAR BENEFIT TABLE")
+    c.font  = Font(name="Arial", bold=True, color="FFFFFF", size=12)
+    c.fill  = PatternFill("solid", fgColor="1A1A2E")
+    c.alignment = Alignment(horizontal="left", vertical="center")
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=8)
+    ws.row_dimensions[1].height = 24
+
+    c2 = ws.cell(row=2, column=1,
+                 value=(f"Scenario: ={am.get('scenario_name','\"Stable\"')}  |  "
+                        "Rising curves reflect the rising cost of climate inaction. "
+                        "All cells are live formulas — change ASSUMPTIONS to update."))
+    c2.font  = Font(name="Arial", size=8, color="CBD5E1")
+    c2.fill  = PatternFill("solid", fgColor="16213E")
+    c2.alignment = Alignment(horizontal="left", vertical="center")
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=8)
+    ws.row_dimensions[2].height = 14
+
+    row = 4
+    yrp_refs = {}
+
+    DR_REF   = f"Inputs!$B${rm['dr']}" if rm and rm.get("dr") else f"={am.get('dr_ref', '0.035')}"
+
+    for mi, m in enumerate(measures):
+        mname = m.get("name", f"Measure {mi+1}")
+        cats  = yrp_cat_refs.get(mi, {"health": "0", "energy": "0", "other": "0"})
+
+        # ── Measure section header ──────────────────────────────────────────
+        c_hdr = ws.cell(row=row, column=1, value=f"MEASURE {mi+1}: {mname}")
+        c_hdr.font  = Font(name="Arial", bold=True, color="FFFFFF", size=10)
+        c_hdr.fill  = PatternFill("solid", fgColor="15803d")
+        c_hdr.alignment = Alignment(horizontal="left", vertical="center")
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=8)
+        ws.row_dimensions[row].height = 18
+        row += 1
+        row += 1  # blank
+
+        # ── Parameter block ─────────────────────────────────────────────────
+        def _param_row(label, formula_or_val, fmt=None):
+            nonlocal row
+            c1 = ws.cell(row=row, column=1, value=label)
+            c1.font  = Font(name="Arial", size=9, bold=True, color="14532d")
+            c1.fill  = PatternFill("solid", fgColor="dcfce7")
+            c1.border = _bd()
+            c1.alignment = Alignment(vertical="center")
+            c2p = ws.cell(row=row, column=2, value=formula_or_val)
+            c2p.font  = Font(name="Arial", size=9, color="16a34a")
+            c2p.fill  = PatternFill("solid", fgColor="dcfce7")
+            c2p.border = _bd()
+            c2p.alignment = Alignment(horizontal="right", vertical="center")
+            if fmt:
+                c2p.number_format = fmt
+            ws.row_dimensions[row].height = 15
+            ref = f"$B${row}"
+            row += 1
+            return ref
+
+        if challenge_type == "flood":
+            r_exp_ref    = _param_row("Flood Freq. Multiplier (/decade)", f"={am['flood_freq']}", "0.000")
+            cdd_inc_ref  = _param_row("Sea Level Rise (cm/decade)",        f"={am['sea_rise']}", "0.0")
+            cdd_base_ref = _param_row("Baseline SLR Reference (=1.0)",     1.0, "0.000")
+        else:
+            r_exp_ref    = _param_row("Heat Days Growth Rate (r_exp)", f"={am['r_exp']}", "0.000")
+            cdd_inc_ref  = _param_row("CDD Annual Increment",          f"={am['cdd_inc']}", "0.0")
+            cdd_base_ref = _param_row("Baseline Annual CDD",           f"={am['baseline_cdd']}", "#,##0")
+
+        # Health base — could be a compound formula string like "A!$B$5+A!$B$6"
+        h_val = cats["health"]
+        if h_val == "0":
+            health_ref = _param_row("Base Health Benefit/yr", 0, "#,##0.000")
+        else:
+            health_ref = _param_row("Base Health Benefit/yr", f"={h_val}", "#,##0.000")
+
+        e_val = cats["energy"]
+        if e_val == "0":
+            energy_ref = _param_row("Base Energy Benefit/yr", 0, "#,##0.000")
+        else:
+            energy_ref = _param_row("Base Energy Benefit/yr", f"={e_val}", "#,##0.000")
+
+        o_val = cats["other"]
+        if o_val == "0":
+            other_ref = _param_row("Base Other Benefit/yr", 0, "#,##0.000")
+        else:
+            other_ref = _param_row("Base Other Benefit/yr", f"={o_val}", "#,##0.000")
+
+        dr_ref = _param_row("Discount Rate", f"={DR_REF}", "0.00%")
+
+        mat_ref = None
+        if stype == "natural_shading" and am.get("mat_years_ref"):
+            mat_ref = _param_row("Maturity Years", f"={am['mat_years_ref']}", "#,##0")
+
+        row += 1  # blank before header row
+
+        # ── Column headers ──────────────────────────────────────────────────
+        if challenge_type == "flood":
+            b_col_label, c_col_label = "Flood Freq Factor", "SLR Factor"
+        else:
+            b_col_label, c_col_label = "Exp Factor", "CDD Factor"
+        col_hdrs = ["Year", b_col_label, c_col_label, "Disc Factor",
+                    "Health PV", "Energy PV", "Other PV", "Total PV Year"]
+        for ci, h in enumerate(col_hdrs, 1):
+            c_h = ws.cell(row=row, column=ci, value=h)
+            c_h.font  = Font(name="Arial", bold=True, color="FFFFFF", size=8)
+            c_h.fill  = PatternFill("solid", fgColor="3B82F6")
+            c_h.border = _bd()
+            c_h.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[row].height = 16
+        row += 1
+
+        # ── Data rows (t = 1 … horizon) ─────────────────────────────────────
+        data_start = row
+        for t in range(1, horizon + 1):
+            # A: Year
+            ws.cell(row=row, column=1, value=t).border = _bd()
+
+            # B: Escalation Factor — flood freq multiplier or heat exp factor
+            if challenge_type == "flood":
+                b_formula = f"=1+{r_exp_ref}*A{row}/10"
+            else:
+                b_formula = f"=(1+{r_exp_ref})^A{row}"
+            b_c = ws.cell(row=row, column=2, value=b_formula)
+            b_c.number_format = "0.0000"; b_c.border = _bd()
+            b_c.alignment = Alignment(horizontal="right")
+
+            # C: Secondary Factor — SLR factor or CDD factor
+            if challenge_type == "flood":
+                c_formula = f"=1+({cdd_inc_ref}*A{row}/10/100)"
+            else:
+                c_formula = f"=({cdd_base_ref}+{cdd_inc_ref}*A{row})/{cdd_base_ref}"
+            c_c = ws.cell(row=row, column=3, value=c_formula)
+            c_c.number_format = "0.0000"; c_c.border = _bd()
+            c_c.alignment = Alignment(horizontal="right")
+
+            # D: Disc Factor = 1/(1+dr)^t
+            d_c = ws.cell(row=row, column=4,
+                          value=f"=1/(1+{dr_ref})^A{row}")
+            d_c.number_format = "0.0000"; d_c.border = _bd()
+            d_c.alignment = Alignment(horizontal="right")
+
+            # E: Health PV
+            if mat_ref and stype == "natural_shading":
+                e_formula = (f"={health_ref}*IF(A{row}<={mat_ref},A{row}/{mat_ref},1)"
+                             f"*B{row}*D{row}")
+            else:
+                e_formula = f"={health_ref}*B{row}*D{row}"
+            e_c = ws.cell(row=row, column=5, value=e_formula)
+            e_c.number_format = "#,##0.000"; e_c.border = _bd()
+            e_c.alignment = Alignment(horizontal="right")
+
+            # F: Energy PV
+            f_c = ws.cell(row=row, column=6,
+                          value=f"={energy_ref}*C{row}*D{row}")
+            f_c.number_format = "#,##0.000"; f_c.border = _bd()
+            f_c.alignment = Alignment(horizontal="right")
+
+            # G: Other PV
+            g_c = ws.cell(row=row, column=7,
+                          value=f"={other_ref}*D{row}")
+            g_c.number_format = "#,##0.000"; g_c.border = _bd()
+            g_c.alignment = Alignment(horizontal="right")
+
+            # H: Total PV Year
+            h_c = ws.cell(row=row, column=8,
+                          value=f"=E{row}+F{row}+G{row}")
+            h_c.number_format = "#,##0.000"; h_c.border = _bd()
+            h_c.alignment = Alignment(horizontal="right")
+            h_c.font = Font(name="Arial", bold=True, color="065F46")
+            h_c.fill = PatternFill("solid", fgColor="D1FAE5")
+
+            row += 1
+
+        data_end = row - 1
+
+        # ── NPV summary row ─────────────────────────────────────────────────
+        c_npv_lbl = ws.cell(row=row, column=1, value="Total NPV (Dynamic 50yr)")
+        c_npv_lbl.font  = Font(name="Arial", bold=True, color="FFFFFF", size=10)
+        c_npv_lbl.fill  = PatternFill("solid", fgColor="052e16")
+        c_npv_lbl.border = _bd()
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=7)
+
+        npv_formula = f"=SUM(H{data_start}:H{data_end})"
+        c_npv_val = ws.cell(row=row, column=8, value=npv_formula)
+        c_npv_val.font  = Font(name="Arial", bold=True, color="FFFFFF", size=10)
+        c_npv_val.fill  = PatternFill("solid", fgColor="052e16")
+        c_npv_val.number_format = "#,##0.000"
+        c_npv_val.border = _bd()
+        c_npv_val.alignment = Alignment(horizontal="right", vertical="center")
+        ws.row_dimensions[row].height = 20
+
+        yrp_refs[mi] = {"npv_cell": f"'Yearly_Projection_Model'!H{row}"}
+
+        row += 2  # gap before next measure
+
+    return yrp_refs
+
+
+# ── SHEET: COST DETAIL ─────────────────────────────────────────────────────────
+def _cost_detail(wb, data, rm):
+    """Cost Detail sheet — unit-cost × quantity breakdown per measure.
+
+    Each measure gets a table: Cost Item | Unit Cost | Qty | Unit | Total.
+    If the measure JSON includes a 'cost_breakdown' list it is used;
+    otherwise a single default row is written from the CAPEX value.
+    CAPEX / OPEX cells in Inputs remain as-is (static editable); a note in
+    each measure's section shows the Inputs cross-reference.
+    """
+    ws = wb.create_sheet("Cost Detail")
+    ws.sheet_view.showGridLines = False
+    ws.tab_color = "F59E0B"
+
+    measures = data["measures"]
+    cur      = data.get("currency", "NIS")
+    row      = 1
+
+    # Column widths
+    for col, w in {1: 30, 2: 14, 3: 10, 4: 12, 5: 14, 6: 36}.items():
+        ws.column_dimensions[get_column_letter(col)].width = w
+
+    def _sheet_title(r, txt):
+        c = ws.cell(row=r, column=1, value=txt)
+        c.font      = Font(name="Arial", bold=True, color=C_WHITE, size=12)
+        c.fill      = PatternFill("solid", fgColor=C_DARK)
+        c.alignment = Alignment(horizontal="left", vertical="center")
+        c.border    = _bd()
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=6)
+        ws.row_dimensions[r].height = 24
+
+    def _measure_title(r, name):
+        c = ws.cell(row=r, column=1, value=f"Measure: {name}")
+        c.font      = Font(name="Arial", bold=True, color=C_WHITE, size=11)
+        c.fill      = PatternFill("solid", fgColor=C_MID)
+        c.alignment = Alignment(horizontal="left", vertical="center")
+        c.border    = _bd()
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=6)
+        ws.row_dimensions[r].height = 20
+
+    def _col_hdr(r):
+        for ci, h in enumerate(
+            ["Cost Item", f"Unit Cost ({cur})", "Quantity", "Unit", f"Total ({cur})", "Notes"], 1
+        ):
+            c = ws.cell(row=r, column=ci, value=h)
+            c.font      = Font(name="Arial", bold=True, color=C_WHITE, size=9)
+            c.fill      = PatternFill("solid", fgColor=C_ACCENT)
+            c.border    = _bd()
+            c.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[r].height = 16
+
+    def _item_row(r, item, unit_cost, qty, unit, note=""):
+        vals = [item, unit_cost, qty, unit, f"=B{r}*C{r}", note]
+        for ci, v in enumerate(vals, 1):
+            c = ws.cell(row=r, column=ci, value=v)
+            is_editable = ci in (2, 3)
+            c.font  = Font(name="Arial", size=9,
+                           color=BLUE if is_editable else "334155")
+            c.fill  = PatternFill("solid",
+                                  fgColor="EFF6FF" if is_editable else "F8FAFC")
+            c.border = _bd()
+            c.alignment = Alignment(horizontal="right" if ci in (2, 3, 5) else "left",
+                                    vertical="center")
+            if ci in (2, 5):
+                c.number_format = "#,##0.00"
+            if ci == 3:
+                c.number_format = "#,##0"
+        ws.row_dimensions[r].height = 15
+
+    def _total_row(r, label, sum_range_start, sum_range_end, note=""):
+        c = ws.cell(row=r, column=1, value=f"► {label}")
+        c.font  = Font(name="Arial", bold=True, size=9, color=C_COMP_FG)
+        c.fill  = PatternFill("solid", fgColor=C_COMP_BG)
+        c.border = _bd()
+        c.alignment = Alignment(horizontal="left", vertical="center")
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=4)
+        c5 = ws.cell(row=r, column=5,
+                     value=f"=SUM(E{sum_range_start}:E{sum_range_end})")
+        c5.font   = Font(name="Arial", bold=True, size=9, color=C_COMP_FG)
+        c5.fill   = PatternFill("solid", fgColor=C_COMP_BG)
+        c5.number_format = "#,##0.00"
+        c5.border = _bd()
+        c5.alignment = Alignment(horizontal="right", vertical="center")
+        c6 = ws.cell(row=r, column=6, value=note)
+        c6.font  = Font(name="Arial", size=8, color="64748B", italic=True)
+        c6.fill  = PatternFill("solid", fgColor=C_COMP_BG)
+        c6.border = _bd()
+        ws.row_dimensions[r].height = 16
+
+    # ── Sheet header ──────────────────────────────────────────────────────────
+    _sheet_title(row, "COST DETAIL — Unit-Cost × Quantity Breakdown"); row += 1
+    note_c = ws.cell(row=row, column=1,
+                     value="Blue cells = editable. Total column uses live =B×C formula. "
+                           "Update Inputs sheet CAPEX/OPEX after editing here.")
+    note_c.font = Font(name="Arial", size=9, color="64748B", italic=True)
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
+    row += 2
+
+    capex_inputs_row = rm.get("capex")
+    opex_inputs_row  = rm.get("opex")
+
+    for mi, m in enumerate(measures):
+        _measure_title(row, m.get("name", f"Measure {mi+1}")); row += 1
+
+        # ── CAPEX breakdown ──────────────────────────────────────────────────
+        ws.cell(row=row, column=1, value="CAPITAL COSTS (CAPEX)").font = Font(
+            name="Arial", bold=True, size=9, color="1E3A5F")
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
+        ws.row_dimensions[row].height = 14; row += 1
+        _col_hdr(row); row += 1
+
+        capex_items_start = row
+        breakdown = m.get("cost_breakdown") or []
+        capex_items = [b for b in breakdown if b.get("type", "capex") == "capex"]
+        opex_items  = [b for b in breakdown if b.get("type", "opex") == "opex"]
+
+        if capex_items:
+            for item in capex_items:
+                _item_row(row, item.get("item", "Cost item"),
+                          item.get("unit_cost", 0), item.get("qty", 1),
+                          item.get("unit", "unit"), item.get("note", ""))
+                row += 1
+        else:
+            # Default single row from CAPEX total (in currency millions → convert to units)
+            capex_val = m.get("capex", 0)
+            _item_row(row, m.get("name", "Capital works"), capex_val * 1_000_000, 1,
+                      "lump sum", f"Source: {m.get('capex_source', 'see Inputs sheet')}")
+            row += 1
+        capex_items_end = row - 1
+
+        ref_note = (f"→ Inputs CAPEX row {capex_inputs_row}"
+                    if capex_inputs_row else "→ see Inputs sheet")
+        _total_row(row, "CAPEX TOTAL", capex_items_start, capex_items_end, ref_note); row += 1
+
+        # ── OPEX breakdown ───────────────────────────────────────────────────
+        ws.cell(row=row, column=1, value="ANNUAL OPERATING COSTS (OPEX)").font = Font(
+            name="Arial", bold=True, size=9, color="1E3A5F")
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
+        ws.row_dimensions[row].height = 14; row += 1
+        _col_hdr(row); row += 1
+
+        opex_items_start = row
+        if opex_items:
+            for item in opex_items:
+                _item_row(row, item.get("item", "O&M item"),
+                          item.get("unit_cost", 0), item.get("qty", 1),
+                          item.get("unit", "unit/yr"), item.get("note", ""))
+                row += 1
+        else:
+            opex_val = m.get("annual_opex", 0)
+            _item_row(row, "Annual maintenance & operations",
+                      opex_val * 1_000_000, 1,
+                      "lump sum/yr", f"Source: {m.get('opex_source', 'see Inputs sheet')}")
+            row += 1
+        opex_items_end = row - 1
+
+        ref_note_o = (f"→ Inputs OPEX row {opex_inputs_row}"
+                      if opex_inputs_row else "→ see Inputs sheet")
+        _total_row(row, "ANNUAL OPEX TOTAL", opex_items_start, opex_items_end, ref_note_o)
+        row += 3  # gap between measures
+
+
+def build_excel(data: dict, path: str, assumptions_override: dict = None,
+                scenario_params: dict = None, audit_acknowledged: bool = False,
+                challenge_type: str = "general"):
     # Validate and auto-correct mortality parameters FIRST
     import logging
     warnings = _sanitise_mortality_params(data)
     for w in warnings:
         logging.warning(w)
 
+    if scenario_params is None:
+        scenario_params = {"name": "Stable (Baseline)", "heat_days_growth_rate": 0.0, "cdd_increment": 0.0}
+
     if assumptions_override:
         for section in ("vsl_params", "cdd_params", "specialist_params"):
             if section in assumptions_override:
                 data.setdefault(section, {}).update(assumptions_override[section])
     wb = Workbook()
-    am = _assumptions(wb, data)
+    am = _assumptions(wb, data, scenario_params=scenario_params, challenge_type=challenge_type)
     # _assumptions inserts at index 0, pushing the default "Sheet" to index 1.
     # Reset active so _inputs renames the original default sheet to "Inputs".
     wb.active = wb.worksheets[1]
@@ -1195,14 +1790,26 @@ def build_excel(data: dict, path: str, assumptions_override: dict = None):
         and data.get("specialist_type") not in ("natural_shading", "green_roof")
     )
     bd_total_refs = {}
+    yrp_cat_refs  = {}
     if has_formula_components:
         bd_total_refs = _benefit_detail(wb, data, rm=None)
+        # ── Golden Thread verification ─────────────────────────────────────────
+        for _orphan in _verify_golden_thread(
+            data, {mi: v["total"] for mi, v in bd_total_refs.items()}
+        ):
+            logging.warning(f"[GOLDEN THREAD] {_orphan}")
+        yrp_cat_refs = bd_total_refs  # same dict, new shape includes health/energy/other
+
+    # Specialist types: build yrp_cat_refs from am sub-rows
+    if data.get("specialist_type") in ("natural_shading", "green_roof"):
+        yrp_cat_refs = _build_specialist_cat_refs(data, am)
 
     rm = _inputs(wb, data, am, bd_total_refs=bd_total_refs)
-    _results(wb, data, rm)
+    yrp_refs = _yearly_projection(wb, data, rm, am, yrp_cat_refs, challenge_type=challenge_type)
+    _results(wb, data, rm, yrp_refs=yrp_refs)
     _sensitivity(wb, data, rm)
-    _calculations(wb, data, rm, am)
-    _summary(wb, data, rm)
+    _calculations(wb, data, rm, am, bd_total_refs=bd_total_refs)
+    _cost_detail(wb, data, rm)
 
     # Legacy benefit_types mode: build display-only Benefit Detail after Inputs
     if not has_formula_components and any(
@@ -1215,11 +1822,11 @@ def build_excel(data: dict, path: str, assumptions_override: dict = None):
         _benefit_breakdown(wb, data, rm)
 
     # Add Executive Summary and Parameter Registry sheets
-    _executive_summary(wb, data, rm)
+    _executive_summary(wb, data, rm, am=am, audit_acknowledged=audit_acknowledged)
     _parameter_registry(wb, data, am)
 
     # Move Executive Summary to first tab position
-    wb._sheets.insert(0, wb._sheets.pop(wb.sheetnames.index("Executive Summary")))
+    wb._sheets.insert(0, wb._sheets.pop(wb.sheetnames.index("Executive Dashboard")))
 
     wb.save(path)
 
@@ -1276,6 +1883,15 @@ def _inputs(wb, data, am=None, bd_total_refs=None):
         _endo_cell(ws, row, ci, m["annual_opex"], fmt="#,##0.0")
     _cell(ws, row, n+2, "Recurring annual cost — local estimate"); row += 1
 
+    AREA_ROW = row
+    _cell(ws, row, 1, "Implementation Area (m²)", bold=True)
+    for ci, m in enumerate(measures, 2):
+        area_val = ((m.get("specialist_params") or {}).get("roof_area_m2") or
+                    (m.get("specialist_params") or {}).get("implementation_area_m2") or 1000)
+        _endo_cell(ws, row, ci, area_val, fmt="#,##0")
+    _cell(ws, row, n+2, "Vegetated / treated area — update per project")
+    row += 1
+
     BENEFIT_ROW = row
     _cell(ws, row, 1, "Annual Benefit", bold=True)
     sub_total_ref = am.get("sub_total") if (am and data.get("specialist_type") in ("natural_shading", "green_roof")) else None
@@ -1293,7 +1909,8 @@ def _inputs(wb, data, am=None, bd_total_refs=None):
         bd_refs = bd_total_refs or {}
         has_formulas = bool(bd_refs)
         for idx, (ci, m) in enumerate(zip(range(2, n+2), measures)):
-            ref = bd_refs.get(idx)
+            ref_entry = bd_refs.get(idx)
+            ref = ref_entry["total"] if isinstance(ref_entry, dict) else ref_entry
             if ref:
                 # Link live to Benefit Detail total — the KEY fix
                 c = ws.cell(row=row, column=ci, value=f"={ref}")
@@ -1444,11 +2061,12 @@ def _inputs(wb, data, am=None, bd_total_refs=None):
 
     return {"dr": DR_ROW, "yr": YR_ROW,
             "capex": CAPEX_ROW, "opex": OPEX_ROW,
-            "benefit": BENEFIT_ROW, "life": LIFE_ROW, "n": n}
+            "benefit": BENEFIT_ROW, "life": LIFE_ROW, "n": n,
+            "area": AREA_ROW}
 
 
 # ── SHEET 2: CBA RESULTS ───────────────────────────────────────────────────────
-def _results(wb, data, rm):
+def _results(wb, data, rm, yrp_refs=None):
     ws = wb.create_sheet("CBA Results")
     ws.sheet_view.showGridLines = False
     measures = data["measures"]
@@ -1505,6 +2123,9 @@ def _results(wb, data, rm):
             lambda ci: f"=Inputs!{get_column_letter(ci)}${rm['opex']}", "#,##0.0")
 
     def pv_ben_f(ci):
+        mi = ci - 2  # 0-based measure index
+        if yrp_refs and mi in yrp_refs:
+            return f"={yrp_refs[mi]['npv_cell']}"
         b = inp("benefit", ci); l = inp("life", ci)
         return f"={b}/{dr}*(1-(1+{dr})^(-{l}))"
 
@@ -1512,7 +2133,9 @@ def _results(wb, data, rm):
         k = inp("capex", ci); o = inp("opex", ci); l = inp("life", ci)
         return f"={k}+{o}/{dr}*(1-(1+{dr})^(-{l}))"
 
-    add_row(f"PV of Benefits ({data['currency']}M)", "pv_ben", pv_ben_f, "#,##0.0")
+    _pv_ben_label = (f"PV of Benefits — Dynamic 50yr ({data['currency']}M)"
+                     if yrp_refs else f"PV of Benefits ({data['currency']}M)")
+    add_row(_pv_ben_label, "pv_ben", pv_ben_f, "#,##0.0")
     PVB = rr["pv_ben"]
     add_row(f"PV of Costs ({data['currency']}M)", "pv_cost", pv_cost_f, "#,##0.0")
     PVC = rr["pv_cost"]
@@ -1766,7 +2389,7 @@ def _sensitivity(wb, data, rm):
                 formula = f"=IF({dr_use}>0,IF({pv_cost}>0,{pv_ben}/{pv_cost},0),0)"
 
                 c = ws.cell(row=row, column=mi+2, value=formula)
-                c.font = Font(name="Arial", color=color, bold=(scenario == "Base"), size=10)
+                c.font = Font(name="Arial", color=BLACK, bold=(scenario == "Base"), size=10)
                 c.number_format = "0.00"; c.border = _bd()
                 c.alignment = Alignment(horizontal="right")
                 if bg: c.fill = PatternFill("solid", fgColor=C_LIGHT)
@@ -2439,6 +3062,15 @@ _BENEFIT_ENDO_EXOG = {
 }
 
 
+_DRIVER_MAP = {
+    "avoided_mortality":      "exponential",
+    "morbidity_savings":      "exponential",
+    "energy_savings":         "linear",
+    "property_value_uplift":  "static",
+    "generic_annual":         "static",
+}
+
+
 def _benefit_detail(wb, data, rm=None):
     """
     Benefit Detail sheet — formula-engine version.
@@ -2454,7 +3086,7 @@ def _benefit_detail(wb, data, rm=None):
     cur_unit  = data.get("currency_unit", "millions")
     dr        = data.get("discount_rate", 0.035)
     horizon   = data.get("time_horizon", 30)
-    SPAN      = 6
+    SPAN      = 7
 
     # ── sheet-local helpers ────────────────────────────────────────────────────
     def _title(r, txt):
@@ -2477,7 +3109,7 @@ def _benefit_detail(wb, data, rm=None):
 
     def _col_hdr(r):
         for ci, h in enumerate(
-            ["Parameter", "Value", "Unit", "Type", "Source / Citation", "Notes"], 1
+            ["Parameter", "Value", "Unit", "Type", "Source / Citation", "Notes", "Derivation Logic"], 1
         ):
             c = ws.cell(row=r, column=ci, value=h)
             c.font      = Font(name="Arial", bold=True, color=C_WHITE, size=9)
@@ -2486,7 +3118,8 @@ def _benefit_detail(wb, data, rm=None):
             c.alignment = Alignment(horizontal="center", vertical="center")
 
     def _prow(r, label, value, unit, dtype, source, note="",
-              is_endo=False, is_exog=False, is_comp=False, is_glob=False, fmt=None):
+              is_endo=False, is_exog=False, is_comp=False, is_glob=False, fmt=None,
+              derivation=""):
         """One parameter row."""
         if is_endo:  bg, fg = C_ENDO_BG, C_ENDO_FG
         elif is_exog: bg, fg = C_EXOG_BG, C_EXOG_FG
@@ -2498,7 +3131,12 @@ def _benefit_detail(wb, data, rm=None):
                       else "🟢 Computed"   if is_comp
                       else "🟡 Global"     if is_glob
                       else "")
-        vals = [label, value, unit, type_label, source, note]
+        if not derivation:
+            derivation = ("User-provided local input" if is_endo
+                          else "Literature default — see Parameter Registry" if is_exog
+                          else "Global CBA parameter — see Inputs sheet" if is_glob
+                          else "")
+        vals = [label, value, unit, type_label, source, note, derivation]
         for ci, v in enumerate(vals, 1):
             c = ws.cell(row=r, column=ci, value=v)
             c.font      = Font(name="Arial", size=9, color=fg,
@@ -2511,9 +3149,10 @@ def _benefit_detail(wb, data, rm=None):
                 c.number_format = fmt
         ws.row_dimensions[r].height = 18
 
-    def _result(r, label, formula, source):
+    def _result(r, label, formula, source, derivation=""):
         """► highlighted result row — contains a live Excel formula."""
-        vals = [f"► {label}", formula, f"{cur}M / year", "🟢 Computed", source, "KEY OUTPUT → drives NPV"]
+        vals = [f"► {label}", formula, f"{cur}M / year", "🟢 Computed", source, "KEY OUTPUT → drives NPV",
+                derivation if derivation else f"= {source}"]
         for ci, v in enumerate(vals, 1):
             c = ws.cell(row=r, column=ci, value=v)
             c.font      = Font(name="Arial", bold=True, size=9, color=C_COMP_FG)
@@ -2581,7 +3220,8 @@ def _benefit_detail(wb, data, rm=None):
 
         for col, txt in [(3,"deaths/yr"), (4,"🔵 Computed"),
                          (5,"= pop × mort_rate × HMF × efficiency"),
-                         (6,"Typical range: 5–200 deaths/yr for one measure in one city")]:
+                         (6,"Typical range: 5–200 deaths/yr for one measure in one city"),
+                         (7,"= Population × Mortality_Rate × HMF × Efficiency")]:
             c = ws.cell(row=r, column=col, value=txt)
             c.font  = Font(name="Arial", size=8,
                            color="1D4ED8" if col <= 4 else "64748B",
@@ -2593,7 +3233,8 @@ def _benefit_detail(wb, data, rm=None):
 
         formula = f"=B{r_pop}*B{r_mrate}*B{r_hmf}*B{r_eff}*B{r_vsl}/1000000"
         cell = _result(r, comp.get("name","Avoided Mortality"), formula,
-                       "Population × Mortality Rate × HMF × Efficiency × VSL ÷ 1,000,000"); r+=1
+                       "Population × Mortality Rate × HMF × Efficiency × VSL ÷ 1,000,000",
+                       derivation="= Population × Mortality_Rate × Heat_Mortality_Factor × Efficiency × VSL ÷ 1,000,000"); r+=1
         return cell.coordinate, r
 
     def _build_energy_savings(comp, start_row):
@@ -2612,7 +3253,8 @@ def _benefit_detail(wb, data, rm=None):
 
         formula = f"=B{r_area}*B{r_kwh}*B{r_tariff}/1000000"
         cell = _result(r, comp.get("name","Energy Savings"), formula,
-                       "Area × Energy Reduction × Tariff ÷ 1,000,000"); r+=1
+                       "Area × Energy Reduction × Tariff ÷ 1,000,000",
+                       derivation="= Area_m² × Energy_Reduction_kWh/m² × Electricity_Tariff ÷ 1,000,000"); r+=1
         return cell.coordinate, r
 
     def _build_morbidity_savings(comp, start_row):
@@ -2631,7 +3273,8 @@ def _benefit_detail(wb, data, rm=None):
 
         formula = f"=B{r_cases}*B{r_hcost}*B{r_los}/1000000"
         cell = _result(r, comp.get("name","Morbidity Savings"), formula,
-                       "Cases Avoided × Hosp. Cost × Length of Stay ÷ 1,000,000"); r+=1
+                       "Cases Avoided × Hosp. Cost × Length of Stay ÷ 1,000,000",
+                       derivation="= Cases_Avoided/Year × Hospitalization_Cost × Avg_Length_of_Stay ÷ 1,000,000"); r+=1
         return cell.coordinate, r
 
     def _build_property_value_uplift(comp, start_row):
@@ -2644,9 +3287,23 @@ def _benefit_detail(wb, data, rm=None):
         val_m2  = comp.get("property_value_per_m2", 0)
         uplift  = comp.get("uplift_fraction", 0.03)
 
+        # Auto-correct: if uplift_fraction > 1.0 it was entered as a percentage (e.g. 3 instead of 0.03)
+        _uplift_corrected = isinstance(uplift, (int, float)) and uplift > 1.0
+        if _uplift_corrected:
+            uplift = uplift / 100.0
+            comp["uplift_fraction"] = uplift
+
         r_area  = r; _prow(r, "Affected Area (m²)",                    area,   "m²",          "", comp.get("area_m2_source","User provided"),             is_endo=True,  fmt="#,##0"); r+=1
         r_val   = r; _prow(r, f"Property Value per m² ({cur})",        val_m2, f"{cur}/m²",   "", comp.get("property_value_per_m2_source","Local market"), is_endo=True,  fmt="#,##0"); r+=1
         r_upl   = r; _prow(r, "Uplift Fraction",                       uplift, "fraction",    "", comp.get("uplift_fraction_source","Fuerst & McAllister 2011"), is_exog=True, fmt="0.000"); r+=1
+        # Add explanatory comment to the uplift cell
+        _upl_note = (
+            f"Property Value Uplift: {uplift*100:.1f}% of total property stock value "
+            f"(Area × Value/m² × Uplift). Formula annualises this one-time capital gain "
+            f"over the measure lifetime ({comp.get('lifetime_years', 30)} yrs)."
+            + (" [Auto-corrected from percentage to fraction.]" if _uplift_corrected else "")
+        )
+        ws.cell(row=r_upl, column=2).comment = Comment(_upl_note, "CBA Tool")
 
         # Property uplift is a one-time capital gain → annualise over measure lifetime
         _lifetime = comp.get("lifetime_years", 30)
@@ -2656,7 +3313,8 @@ def _benefit_detail(wb, data, rm=None):
               "Property uplift is a one-time gain — annualised for CBA flow",
               is_exog=True, fmt="0"); r+=1
         cell = _result(r, comp.get("name","Property Value Uplift"), formula,
-                       f"Area × Value/m² × Uplift Fraction ÷ 1,000,000 ÷ {_lifetime} yrs (annualised)"); r+=1
+                       f"Area × Value/m² × Uplift Fraction ÷ 1,000,000 ÷ {_lifetime} yrs (annualised)",
+                       derivation=f"= Area_m² × Property_Value/m² × Uplift_Fraction ÷ 1,000,000 ÷ {_lifetime} (annualised)"); r+=1
         return cell.coordinate, r
 
     def _build_generic(comp, start_row):
@@ -2673,7 +3331,8 @@ def _benefit_detail(wb, data, rm=None):
                           "🟠 Pre-computed literature value — no local formula available",
                           is_exog=True, fmt="#,##0.000"); r+=1
         formula = f"=B{r_val}"
-        cell = _result(r, comp.get("name","Benefit"), formula, source); r+=1
+        cell = _result(r, comp.get("name","Benefit"), formula, source,
+                       derivation="Pre-computed literature value — direct reference"); r+=1
         return cell.coordinate, r
 
     FORMULA_BUILDERS = {
@@ -2799,12 +3458,22 @@ def _benefit_detail(wb, data, rm=None):
                            "source": m.get("data_source","Literature estimate")}]
 
         component_result_refs = []
+        health_cells = []
+        energy_cells = []
+        other_cells  = []
 
         for comp in components:
             ftype   = comp.get("type", "generic_annual")
             builder = FORMULA_BUILDERS.get(ftype, _build_generic)
             cell_ref, row = builder(comp, row)
             component_result_refs.append(cell_ref)
+            _driver = _DRIVER_MAP.get(ftype, "static")
+            if _driver == "exponential":
+                health_cells.append(cell_ref)
+            elif _driver == "linear":
+                energy_cells.append(cell_ref)
+            else:
+                other_cells.append(cell_ref)
             _blank(row); row+=1
 
         # Total annual benefit = sum of all components
@@ -2836,6 +3505,26 @@ def _benefit_detail(wb, data, rm=None):
             c3.alignment = Alignment(vertical="center")
         ws.row_dimensions[row].height = 22
         r_total_ben = row; row+=1
+
+        # ── Driver category subtotals (subdued, small) ─────────────────────
+        def _sub_total_row(label, cells, r):
+            formula = ("=" + "+".join(cells)) if cells else "=0"
+            c_lbl = ws.cell(row=r, column=1, value=f"  \u21b3 {label}")
+            c_lbl.font  = Font(name="Arial", size=8, italic=True, color="475569")
+            c_lbl.fill  = PatternFill("solid", fgColor="F8FAFC")
+            c_lbl.border = _bd()
+            c_lbl.alignment = Alignment(vertical="center")
+            c_val = ws.cell(row=r, column=2, value=formula)
+            c_val.font  = Font(name="Arial", size=8, color="475569")
+            c_val.fill  = PatternFill("solid", fgColor="F8FAFC")
+            c_val.number_format = "#,##0.000"
+            c_val.border = _bd()
+            c_val.alignment = Alignment(horizontal="right", vertical="center")
+            ws.row_dimensions[r].height = 14
+
+        r_health_sub = row; _sub_total_row("Health Benefits (exponential driver)", health_cells, row); row += 1
+        r_energy_sub = row; _sub_total_row("Energy Benefits (linear CDD driver)",  energy_cells, row); row += 1
+        r_other_sub  = row; _sub_total_row("Other Benefits (static)",              other_cells,  row); row += 1
 
         # Annuity factor + PV of benefits
         r_af_b = row
@@ -2911,13 +3600,16 @@ def _benefit_detail(wb, data, rm=None):
         _blank(row); row+=1
 
         summary_rows.append({
-            "name":          mname,
-            "capex":         capex,
-            "pv_ben_ref":    f"B{r_pv_ben}",
-            "pv_cost_ref":   f"B{r_pv_cost}",
-            "npv_ref":       f"B{r_npv}",
-            "bcr_ref":       f"B{r_bcr}",
-            "total_ben_row": r_total_ben,   # row of TOTAL ANNUAL BENEFIT in this sheet
+            "name":               mname,
+            "capex":              capex,
+            "pv_ben_ref":         f"B{r_pv_ben}",
+            "pv_cost_ref":        f"B{r_pv_cost}",
+            "npv_ref":            f"B{r_npv}",
+            "bcr_ref":            f"B{r_bcr}",
+            "total_ben_row":      r_total_ben,
+            "health_subtotal_row": r_health_sub,
+            "energy_subtotal_row": r_energy_sub,
+            "other_subtotal_row":  r_other_sub,
         })
 
     # ── Summary comparison table ───────────────────────────────────────────────
@@ -2962,12 +3654,16 @@ def _benefit_detail(wb, data, rm=None):
         row+=1
 
     # Column widths
-    for col, w in {1:30, 2:14, 3:10, 4:38, 5:44, 6:28}.items():
+    for col, w in {1:30, 2:14, 3:10, 4:38, 5:44, 6:28, 7:40}.items():
         ws.column_dimensions[get_column_letter(col)].width = w
 
-    # Return per-measure total row addresses for Inputs linkage
-    # Key: measure index (0-based), Value: "'Benefit Detail'!B<row>"
+    # Return per-measure references as dict-of-dicts for dynamic scenario engine
     return {
-        idx: f"'Benefit Detail'!B{sr['total_ben_row']}"
+        idx: {
+            "total":  f"'Benefit Detail'!B{sr['total_ben_row']}",
+            "health": f"'Benefit Detail'!B{sr['health_subtotal_row']}",
+            "energy": f"'Benefit Detail'!B{sr['energy_subtotal_row']}",
+            "other":  f"'Benefit Detail'!B{sr['other_subtotal_row']}",
+        }
         for idx, sr in enumerate(summary_rows)
     }
