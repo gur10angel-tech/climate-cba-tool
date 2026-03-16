@@ -311,8 +311,8 @@ def _parameter_registry(wb, data, am):
     stype = data.get("specialist_type")
 
     # Column headers
-    _hdr(ws, 1, 1, "PARAMETER REGISTRY — Full Disclosure", sz=13, span=6)
-    _hdr(ws, 2, 1, "All methodology parameters with academic citations. VSL chain values link live to ASSUMPTIONS sheet.", bg=C_MID, fg="CBD5E1", bold=False, sz=9, span=6)
+    _hdr(ws, 1, 1, "SOURCE CITATIONS — Measure-Specific Inputs", sz=13, span=6)
+    _hdr(ws, 2, 1, "All methodology parameters (VSL, CDD, heat-mortality factors) are in the ASSUMPTIONS sheet. This sheet lists measure-specific inputs and their data sources.", bg=C_MID, fg="CBD5E1", bold=False, sz=9, span=6)
     row = 4
 
     cols = ["Parameter", "Value", "Unit", "Type", "Source", "Citation"]
@@ -346,97 +346,7 @@ def _parameter_registry(wb, data, am):
     _reg_row("Time Horizon", data.get("time_horizon", 50), "years", "Global", "Analyst default", is_endo=True); row += 1
     row += 1
 
-    # ── Section 2: VSL Chain (formula links to ASSUMPTIONS sheet) ────────────
-    _sec(ws, row, 1, "VSL DERIVATION CHAIN (values link live to ASSUMPTIONS sheet)", span=6); row += 1
-
-    vsl_rows = [
-        ("vsl_base",    "OECD Base VSL (2005 USD)",           "USD",    "Exogenous",
-         "Viscusi & Masterman (2017); OECD ENV/WKP(2012)3",
-         "https://doi.org/10.1017/bca.2017.12"),
-        ("cpi_mult",    "CPI Multiplier (2005→2023)",          "ratio",  "Exogenous",
-         "BLS CPI-U Series CUUR0000SA0",
-         "https://www.bls.gov/cpi/"),
-        ("vsl_cpi_adj", "CPI-Adjusted VSL (2023 USD)",         "USD",    "Computed",
-         "= Base VSL × CPI Multiplier", ""),
-        ("ppp_ratio",   "PPP Ratio (Israel/OECD)",             "ratio",  "Exogenous",
-         "World Bank WDI NY.GDP.PCAP.PP.CD",
-         "https://data.worldbank.org"),
-        ("income_el",   "Income Elasticity",                   "—",      "Exogenous",
-         "Standard: 1.0 for developed economies", ""),
-        ("vsl_ppp_adj", "PPP-Adjusted VSL (USD)",              "USD",    "Computed",
-         "= CPI-Adj × PPP × Elasticity", ""),
-        ("fx_rate",     "Exchange Rate (NIS/USD)",             "NIS/USD","Exogenous",
-         "Bank of Israel",
-         "https://www.boi.org.il"),
-        ("vsl_local",   f"VSL in Local Currency ({cur})",      cur,      "Computed",
-         "= PPP-Adj VSL × FX Rate", ""),
-        ("life_exp",    "Life Expectancy Used for VSLY",       "years",  "Exogenous",
-         "UN World Population Prospects", ""),
-        ("vsly_local",  f"VSLY — Value of Statistical Life Year ({cur})", cur, "Computed",
-         "= VSL ÷ Life Expectancy", ""),
-    ]
-    for key, label, unit, ptype, source, url in vsl_rows:
-        am_ref = am.get(key)
-        if am_ref:
-            val = f"={am_ref}"
-            is_c = (ptype == "Computed")
-            _reg_row(label, val, unit, ptype, source, url, is_exog=not is_c, is_comp=is_c)
-        else:
-            _reg_row(label, "—", unit, ptype, source, url)
-        row += 1
-    row += 1
-
-    # ── Section 3: CDD / Heat-Mortality Parameters ────────────────────────────
-    _sec(ws, row, 1, "CDD / HEAT-MORTALITY PARAMETERS", span=6); row += 1
-    cdd = data.get("cdd_params", {})
-    _reg_row("Annual CDD (Cooling Degree Days)",
-             cdd.get("annual_cdd", 735), "CDD/yr", "Exogenous",
-             "Israel Meteorological Service (IMS), 1990–2020 30-yr normal",
-             "https://ims.gov.il", is_exog=True); row += 1
-    _reg_row("CDD Base Temperature",
-             cdd.get("base_temp", 21), "°C", "Exogenous",
-             "IMS / WHO heat health threshold", "", is_exog=True); row += 1
-    _reg_row("Heat-Mortality Factor (HMF)",
-             cdd.get("heat_mortality_factor", 0.00083), "deaths/°C/person", "Exogenous",
-             "Gasparrini et al. (2017) Lancet — Mediterranean cluster",
-             "https://doi.org/10.1016/S0140-6736(17)32302-7", is_exog=True); row += 1
-    _reg_row("Morbidity Multiplier",
-             cdd.get("morbidity_multiplier", 10), "cases/death", "Exogenous",
-             "WHO Europe Heat Health Action Plan (2008)",
-             "https://apps.who.int/iris/handle/10665/107552", is_exog=True); row += 1
-    _reg_row("Skin Cancer Incidence Rate",
-             0.000161, "per person/yr", "Exogenous",
-             "Israeli Cancer Registry; WHO IARC Monograph 100D",
-             "https://www.iarc.fr", is_exog=True); row += 1
-    row += 1
-
-    # ── Section 4: Specialist Parameters (if applicable) ─────────────────────
-    if stype in ("natural_shading", "green_roof"):
-        _sec(ws, row, 1, f"SPECIALIST PARAMETERS — {stype.upper().replace('_', ' ')}", span=6); row += 1
-        sp = data.get("specialist_params", {})
-        if stype == "natural_shading":
-            _reg_row("Heat Reduction Efficiency",
-                     sp.get("heat_reduction_efficiency", 0.5), "fraction", "Exogenous",
-                     "Shashua-Bar & Hoffman (2000) Energy and Buildings", "", is_exog=True); row += 1
-            _reg_row("UV Reduction Factor",
-                     sp.get("uv_reduction_factor", 0.75), "fraction", "Exogenous",
-                     "WHO UV Index guidelines; Nowak et al. (2002) USDA", "", is_exog=True); row += 1
-            _reg_row("Maturity Years (linear ramp)",
-                     sp.get("maturity_years", 8), "years", "Exogenous",
-                     "Nowak et al. (2002) Brooklyn Urban Forest, USDA NE-290", "", is_exog=True); row += 1
-        elif stype == "green_roof":
-            _reg_row("Heat Reduction Efficiency",
-                     sp.get("heat_reduction_efficiency", 0.28), "fraction", "Exogenous",
-                     "Berghage et al. (2009) EPA/600/R-09/026", "", is_exog=True); row += 1
-            _reg_row("Property Value Uplift",
-                     sp.get("property_value_uplift", 0.03), "%", "Exogenous",
-                     "Fuerst & McAllister (2011) Real Estate Economics", "", is_exog=True); row += 1
-            _reg_row("Roof Longevity Extension",
-                     sp.get("roof_longevity_years", 20), "years", "Exogenous",
-                     "Berghage et al. (2009) EPA/600/R-09/026", "", is_exog=True); row += 1
-        row += 1
-
-    # ── Section 5: Per-Measure Inputs ─────────────────────────────────────────
+    # ── Section 2: Per-Measure Inputs ─────────────────────────────────────────
     _sec(ws, row, 1, "PER-MEASURE INPUTS", span=6); row += 1
     for m in data.get("measures", []):
         _cell(ws, row, 1, m.get("name", ""), bold=True)
@@ -864,6 +774,14 @@ def _assumptions(wb, data, scenario_params=None, challenge_type="general") -> di
         am["sub_habitat_creation"]       = am.get("sub_habitat_creation_npv",       am.get("sub_habitat_creation"))
         am["sub_property_value_uplift"]  = am.get("sub_property_value_uplift_npv",  am.get("sub_property_value_uplift"))
         am["sub_roof_longevity"]         = am.get("sub_roof_longevity_npv",         am.get("sub_roof_longevity"))
+
+        # ── Expose individual parameter rows for Benefit Detail cross-sheet links ──
+        if challenge_type != "flood":
+            am["hmf"]            = f"ASSUMPTIONS!$B${HEAT_MORT_ROW}"
+            am["base_mort_rate"] = f"ASSUMPTIONS!$B${BASE_MORT_ROW}"
+            am["efficiency"]     = f"ASSUMPTIONS!$B${HEAT_EFF_ROW}"
+        am["hosp_cost"] = f"ASSUMPTIONS!$B${HOSP_COST_ROW}"
+        am["avg_los"]   = f"ASSUMPTIONS!$B${AVG_LOS_ROW}"
 
     # ── CLIMATE SCENARIO PARAMETERS ──────────────────────────────────────────────
     _csp = scenario_params or {
@@ -1792,7 +1710,7 @@ def build_excel(data: dict, path: str, assumptions_override: dict = None,
     bd_total_refs = {}
     yrp_cat_refs  = {}
     if has_formula_components:
-        bd_total_refs = _benefit_detail(wb, data, rm=None)
+        bd_total_refs = _benefit_detail(wb, data, rm=None, am=am)
         # ── Golden Thread verification ─────────────────────────────────────────
         for _orphan in _verify_golden_thread(
             data, {mi: v["total"] for mi, v in bd_total_refs.items()}
@@ -3071,7 +2989,7 @@ _DRIVER_MAP = {
 }
 
 
-def _benefit_detail(wb, data, rm=None):
+def _benefit_detail(wb, data, rm=None, am=None):
     """
     Benefit Detail sheet — formula-engine version.
     For each measure, each benefit component is computed via a live Excel formula
@@ -3195,11 +3113,19 @@ def _benefit_detail(wb, data, rm=None):
         if isinstance(vsl, (int, float)) and 0 < vsl < 1000:
             vsl = vsl * 1_000_000
 
-        r_pop   = r; _prow(r, "Population at Risk (persons)",            pop,   "persons",  "", comp.get("population_at_risk_source","User provided"),          is_endo=True,  fmt="#,##0"); r+=1
-        r_mrate = r; _prow(r, "Base Annual Mortality Rate",              mrate, "deaths/person/yr", "", comp.get("mortality_rate_source","Ministry of Health"),   is_exog=True,  fmt="0.0000"); r+=1
-        r_hmf   = r; _prow(r, "Heat-Attributable Mortality Fraction (annual, fraction of deaths)", hmf, "fraction of annual deaths", "", comp.get("heat_mortality_factor_source","Gasparrini et al. 2017"), is_exog=True, fmt="0.000000"); r+=1
-        r_eff   = r; _prow(r, "Heat Reduction Efficiency of this measure", eff, "fraction 0–1", "", comp.get("heat_reduction_efficiency_source","Literature"),    is_exog=True,  fmt="0.00"); r+=1
-        r_vsl   = r; _prow(r, f"VSL — Value of Statistical Life ({cur})", vsl,  cur,          "", comp.get("vsl_source","OECD 2012 meta-analysis"),              is_exog=True,  fmt="#,##0"); r+=1
+        # Use ASSUMPTIONS cross-sheet links for shared methodology params when am is available
+        _hmf_val = (f"={am['hmf']}"       if (am and am.get("hmf"))        else hmf)
+        _eff_val = (f"={am['efficiency']}" if (am and am.get("efficiency")) else eff)
+        _vsl_val = (f"={am['vsl_local']}"  if (am and am.get("vsl_local")) else vsl)
+        _hmf_linked = am and am.get("hmf")
+        _eff_linked = am and am.get("efficiency")
+        _vsl_linked = am and am.get("vsl_local")
+
+        r_pop   = r; _prow(r, "Population at Risk (persons)",            pop,        "persons",                "", comp.get("population_at_risk_source","User provided"),                                          is_endo=True,                    fmt="#,##0"); r+=1
+        r_mrate = r; _prow(r, "Base Annual Mortality Rate",              mrate,      "deaths/person/yr",        "", comp.get("mortality_rate_source","Ministry of Health"),                                          is_exog=True,                    fmt="0.0000"); r+=1
+        r_hmf   = r; _prow(r, "Heat-Attributable Mortality Fraction (annual, fraction of deaths)", _hmf_val, "fraction of annual deaths", "", comp.get("heat_mortality_factor_source","Gasparrini et al. 2017") + (" → links to ASSUMPTIONS" if _hmf_linked else ""), is_exog=not _hmf_linked, is_glob=bool(_hmf_linked), fmt="0.000000"); r+=1
+        r_eff   = r; _prow(r, "Heat Reduction Efficiency of this measure", _eff_val, "fraction 0–1",            "", comp.get("heat_reduction_efficiency_source","Literature")                                        + (" → links to ASSUMPTIONS" if _eff_linked else ""), is_exog=not _eff_linked, is_glob=bool(_eff_linked), fmt="0.00"); r+=1
+        r_vsl   = r; _prow(r, f"VSL — Value of Statistical Life ({cur})", _vsl_val, cur,                       "", comp.get("vsl_source","OECD 2012 meta-analysis")                                                + (" → links to ASSUMPTIONS" if _vsl_linked else ""), is_exog=not _vsl_linked, is_glob=bool(_vsl_linked), fmt="#,##0"); r+=1
 
         # Intermediate: Deaths avoided/yr — shown prominently as the KEY sanity-check number
         r_deaths = r
@@ -3267,9 +3193,14 @@ def _benefit_detail(wb, data, rm=None):
         hcost   = comp.get("hospitalization_cost", 3928)
         los     = comp.get("avg_length_of_stay_days", 5.2)
 
+        _hcost_val  = (f"={am['hosp_cost']}" if (am and am.get("hosp_cost")) else hcost)
+        _los_val    = (f"={am['avg_los']}"   if (am and am.get("avg_los"))   else los)
+        _hcost_glob = am and am.get("hosp_cost")
+        _los_glob   = am and am.get("avg_los")
+
         r_cases = r; _prow(r, "Heat-Attributable Cases Avoided / Year", cases,  "cases/yr",    "", comp.get("cases_source","User estimate / literature"),      is_endo=True,  fmt="#,##0"); r+=1
-        r_hcost = r; _prow(r, f"Hospitalization Cost ({cur}/day)",      hcost,  f"{cur}/day",  "", comp.get("hospitalization_cost_source","Ministry of Health"), is_exog=True, fmt="#,##0"); r+=1
-        r_los   = r; _prow(r, "Average Length of Stay (days)",          los,    "days",        "", comp.get("avg_length_of_stay_days_source","Clinical literature"), is_exog=True, fmt="0.0"); r+=1
+        r_hcost = r; _prow(r, f"Hospitalization Cost ({cur}/day)",      _hcost_val, f"{cur}/day", "", comp.get("hospitalization_cost_source","Ministry of Health"), is_glob=_hcost_glob, is_exog=not _hcost_glob, fmt="#,##0"); r+=1
+        r_los   = r; _prow(r, "Average Length of Stay (days)",          _los_val,   "days",      "", comp.get("avg_length_of_stay_days_source","Clinical literature"), is_glob=_los_glob, is_exog=not _los_glob, fmt="0.0"); r+=1
 
         formula = f"=B{r_cases}*B{r_hcost}*B{r_los}/1000000"
         cell = _result(r, comp.get("name","Morbidity Savings"), formula,

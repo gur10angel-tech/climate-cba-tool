@@ -2223,8 +2223,34 @@ LITERATURE PARAMETER VALUES — use these to populate formula fields and their _
                                     ).strip()
                 return d
 
+            def _sanitize_flood_benefits(d: dict, challenge_type: str) -> dict:
+                """Strip heat-specific benefit components when challenge is flood."""
+                if challenge_type != "flood":
+                    return d
+                import copy; d = copy.deepcopy(d)
+                for m in d.get("measures", []):
+                    comps = m.get("benefit_components") or []
+                    cleaned = []
+                    for comp in comps:
+                        ctype = (comp.get("type") or "").lower()
+                        name  = (comp.get("name") or "").lower()
+                        # Drop skin cancer / UV components
+                        if ctype == "skin_cancer_prevention":
+                            continue
+                        if any(kw in name for kw in ("uv", "skin", "cancer", "solar")):
+                            continue
+                        # Zero out heat_mortality_factor if it leaked through
+                        if comp.get("heat_mortality_factor", 0) > 0:
+                            comp = dict(comp)
+                            comp["heat_mortality_factor"] = 0.0
+                            comp["heat_mortality_factor_source"] = "Zeroed — flood challenge: heat mortality not applicable"
+                        cleaned.append(comp)
+                    m["benefit_components"] = cleaned
+                return d
+
             if data:
                 data = _apply_israel_defaults(data)
+                data = _sanitize_flood_benefits(data, st.session_state.get("challenge_type", "general"))
                 st.session_state.analysis_data = data
                 sources_used = set()
                 for m in data.get("measures", []):
