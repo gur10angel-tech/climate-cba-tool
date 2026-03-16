@@ -1637,6 +1637,7 @@ for k, v in {
     "escalation_rates": CLIMATE_SCENARIOS["Stable (Baseline)"],
     "audit_acknowledged": False,
     "audit_corrections_applied": False,
+    "use_defaults_flag": False,
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -1872,6 +1873,9 @@ def _api_error_msg(e) -> str:
 
 # ── Form processing (module-level so st.rerun() is safe) ───────────────────────
 if send and user_input.strip() and st.session_state.api_key:
+        # Client-side "use defaults" detection — persists across reruns
+        if "use default" in user_input.lower():
+            st.session_state["use_defaults_flag"] = True
         st.session_state.messages.append({"role": "user", "content": user_input})
         _key = st.session_state.api_key.strip().encode("ascii", errors="ignore").decode("ascii")
         client = anthropic.Anthropic(api_key=_key)
@@ -1956,6 +1960,9 @@ Be concise and cite sources."""
             st.session_state.messages.append({"role": "assistant", "content": reply})
             st.session_state.specialist_type  = detect_specialist_type(st.session_state.problem_text)
             st.session_state.challenge_type   = detect_challenge_type(st.session_state.problem_text)
+            # Purge UV/skin-cancer specialist logic when challenge is non-heat
+            if st.session_state.specialist_type == "natural_shading" and st.session_state.challenge_type not in ("heat", "general"):
+                st.session_state.specialist_type = None
             st.session_state.stage = "measures"
             st.rerun()
 
@@ -2161,6 +2168,9 @@ LITERATURE PARAMETER VALUES — use these to populate formula fields and their _
                 except (anthropic.BadRequestError, anthropic.APIStatusError) as e:
                     st.session_state.messages.append({"role": "assistant", "content": _api_error_msg(e)})
                     st.rerun()
+                except Exception as e:
+                    st.session_state.messages.append({"role": "assistant", "content": f"⚠️ Unexpected API error: {e}"})
+                    st.rerun()
 
             raw = resp.content[0].text
             data = _extract_json(raw)
@@ -2183,8 +2193,38 @@ LITERATURE PARAMETER VALUES — use these to populate formula fields and their _
                     except (anthropic.BadRequestError, anthropic.APIStatusError) as e:
                         st.session_state.messages.append({"role": "assistant", "content": _api_error_msg(e)})
                         st.rerun()
+                    except Exception as e:
+                        st.session_state.messages.append({"role": "assistant", "content": f"⚠️ Unexpected API error: {e}"})
+                        st.rerun()
+
+            # ── Israel hard-coded fallback (bypasses RAG drift) ────────────────
+            _ISRAEL_DEFAULTS = {
+                "vsl":                  11_500_000,   # NIS — OECD 2005 CPI/PPP/FX adjusted
+                "heat_mortality_factor": 0.035,       # Gasparrini 2017, Mediterranean median
+                "mortality_rate":        0.008,       # CBS 2022 general population
+                "heatwave_days":         35,          # Israel Meteorological Service baseline
+            }
+            def _apply_israel_defaults(d: dict) -> dict:
+                """If use_defaults_flag is set and currency is NIS, clamp benefit_component params."""
+                if not st.session_state.get("use_defaults_flag"):
+                    return d
+                if (d.get("currency") or "").upper() != "NIS":
+                    return d
+                import copy; d = copy.deepcopy(d)
+                for m in d.get("measures", []):
+                    for comp in (m.get("benefit_components") or []):
+                        if comp.get("type") == "avoided_mortality":
+                            for param, val in _ISRAEL_DEFAULTS.items():
+                                if param != "heatwave_days":  # not a direct component field
+                                    comp[param] = val
+                                    comp[f"{param}_source"] = (
+                                        comp.get(f"{param}_source", "") +
+                                        " [Israel hard-coded baseline]"
+                                    ).strip()
+                return d
 
             if data:
+                data = _apply_israel_defaults(data)
                 st.session_state.analysis_data = data
                 sources_used = set()
                 for m in data.get("measures", []):
